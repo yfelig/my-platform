@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>My Platform</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <header>
+    <div class="logo" onclick="navigate('dashboard')">my platform</div>
+    <nav>
+      <a data-view="dashboard" onclick="navigate('dashboard')">Dashboard</a>
+      <a data-view="projects" onclick="navigate('projects')">Projects</a>
+      <a data-view="tasks" onclick="navigate('tasks')">Tasks</a>
+    </nav>
+    <div class="header-actions">
+      <button class="btn btn-ghost btn-sm" onclick="window.location.href='setup.html'" title="Settings">⚙</button>
+    </div>
+  </header>
+
+  <main>
+    <div id="view-dashboard" class="view"></div>
+    <div id="view-projects" class="view"></div>
+    <div id="view-project-detail" class="view"></div>
+    <div id="view-tasks" class="view"></div>
+  </main>
+
+  <button class="fab" id="fab" onclick="fabClick()" title="Add (⌘K)" style="display:none">+</button>
+
+  <div class="modal-overlay" id="modal-overlay">
+    <div class="modal" id="modal-body"></div>
+  </div>
+
+  <script src="gist.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
