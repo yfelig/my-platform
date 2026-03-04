@@ -852,14 +852,22 @@ function botInputKeydown(e) {
   }
 }
 
+function getBotConfig() {
+  const provider = localStorage.getItem('bot_provider') || 'anthropic';
+  const apiKey = localStorage.getItem('bot_api_key') || localStorage.getItem('anthropic_api_key') || '';
+  const model = localStorage.getItem('bot_model') || (provider === 'anthropic' ? 'claude-opus-4-6' : 'gpt-4o');
+  const baseUrl = localStorage.getItem('bot_base_url') || 'https://api.openai.com/v1';
+  return { provider, apiKey, model, baseUrl };
+}
+
 async function botSend() {
   const input = document.getElementById('bot-input');
   const text = input?.value.trim();
   if (!text) return;
 
-  const apiKey = localStorage.getItem('anthropic_api_key');
-  if (!apiKey) {
-    botAppendMessage('assistant', '⚠️ Add your Anthropic API key in Settings (⚙) first.');
+  const config = getBotConfig();
+  if (!config.apiKey) {
+    botAppendMessage('assistant', '⚠️ Add your AI API key in Settings (⚙) first.');
     return;
   }
 
@@ -873,7 +881,11 @@ async function botSend() {
   botSetThinking(true);
 
   try {
-    await botCallClaude(apiKey);
+    if (config.provider === 'anthropic') {
+      await botCallAnthropic(config);
+    } else {
+      await botCallOpenAI(config);
+    }
   } catch (e) {
     botSetThinking(false);
     botAppendMessage('assistant', `Error: ${e.message || 'Something went wrong.'}`);
@@ -940,8 +952,9 @@ Guidelines:
 - If the user asks a question unrelated to creating tasks, just answer it helpfully`;
 }
 
-async function botCallClaude(apiKey) {
-  const messages = [...botHistory];
+async function botCallAnthropic({ apiKey, model }) {
+  // Build Anthropic-format messages from simple botHistory
+  const messages = botHistory.map(m => ({ role: m.role, content: m.content }));
   let finalText = '';
   let didCreateItems = false;
 
@@ -955,7 +968,7 @@ async function botCallClaude(apiKey) {
         'anthropic-dangerous-client-side-access-api-key': 'true',
       },
       body: JSON.stringify({
-        model: 'claude-opus-4-6',
+        model,
         max_tokens: 1024,
         system: botSystemPrompt(),
         tools: BOT_TOOLS,
@@ -970,7 +983,6 @@ async function botCallClaude(apiKey) {
 
     const data = await res.json();
     const content = data.content || [];
-
     messages.push({ role: 'assistant', content });
 
     const textParts = content.filter(b => b.type === 'text').map(b => b.text);
@@ -985,23 +997,78 @@ async function botCallClaude(apiKey) {
       toolResults.push({ type: 'tool_result', tool_use_id: tu.id, content: result });
       didCreateItems = true;
     }
-
-    if (didCreateItems) {
-      await persist();
-      render();
-    }
-
+    if (didCreateItems) { await persist(); render(); }
     messages.push({ role: 'user', content: toolResults });
   }
 
   botSetThinking(false);
-  if (finalText) {
-    botAppendMessage('assistant', finalText);
-  } else if (didCreateItems) {
-    botAppendMessage('assistant', 'Done!');
+  if (finalText) botAppendMessage('assistant', finalText);
+  else if (didCreateItems) botAppendMessage('assistant', 'Done!');
+
+  // Persist only simple text back to history
+  botHistory.push({ role: 'assistant', content: finalText || 'Done!' });
+}
+
+async function botCallOpenAI({ apiKey, model, baseUrl }) {
+  // OpenAI-compatible format (OpenAI, Groq, Ollama, OpenRouter, etc.)
+  const oaiTools = BOT_TOOLS.map(t => ({
+    type: 'function',
+    function: {
+      name: t.name,
+      description: t.description,
+      parameters: t.input_schema,
+    },
+  }));
+
+  // Build messages with system prompt prepended
+  const messages = [
+    { role: 'system', content: botSystemPrompt() },
+    ...botHistory.map(m => ({ role: m.role, content: m.content })),
+  ];
+
+  let finalText = '';
+  let didCreateItems = false;
+
+  for (let iter = 0; iter < 8; iter++) {
+    const res = await fetch(`${baseUrl.replace(/\/$/, '')}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({ model, max_tokens: 1024, tools: oaiTools, messages }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error?.message || `API error ${res.status}`);
+    }
+
+    const data = await res.json();
+    const msg = data.choices?.[0]?.message;
+    if (!msg) break;
+
+    messages.push(msg);
+
+    if (msg.content) finalText = msg.content;
+
+    const toolCalls = msg.tool_calls || [];
+    if (!toolCalls.length || data.choices[0].finish_reason === 'stop') break;
+
+    for (const tc of toolCalls) {
+      const input = JSON.parse(tc.function.arguments);
+      const result = botExecuteTool(tc.function.name, input);
+      messages.push({ role: 'tool', tool_call_id: tc.id, content: result });
+      didCreateItems = true;
+    }
+    if (didCreateItems) { await persist(); render(); }
   }
 
-  botHistory = messages;
+  botSetThinking(false);
+  if (finalText) botAppendMessage('assistant', finalText);
+  else if (didCreateItems) botAppendMessage('assistant', 'Done!');
+
+  botHistory.push({ role: 'assistant', content: finalText || 'Done!' });
 }
 
 function botExecuteTool(name, input) {
