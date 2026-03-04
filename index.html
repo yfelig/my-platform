@@ -18,9 +18,25 @@
       <a data-view="tasks" onclick="navigate('tasks')">Tasks</a>
     </nav>
     <div class="header-actions">
+      <button class="btn btn-ghost btn-sm" id="bot-toggle-btn" onclick="toggleBot()" title="AI Assistant">✦</button>
       <button class="btn btn-ghost btn-sm" onclick="window.location.href='setup.html'" title="Settings">⚙</button>
     </div>
   </header>
+
+  <!-- Bot panel -->
+  <div id="bot-panel" class="bot-panel">
+    <div class="bot-header">
+      <div class="bot-title">✦ AI Assistant</div>
+      <button class="btn btn-ghost btn-sm" onclick="toggleBot()" style="padding:4px 10px;line-height:1">✕</button>
+    </div>
+    <div class="bot-messages" id="bot-messages"></div>
+    <div class="bot-input-row">
+      <textarea id="bot-input" class="bot-input" placeholder="Tell me what you need…" rows="1"
+        oninput="botInputAutoResize(this)"
+        onkeydown="botInputKeydown(event)"></textarea>
+      <button class="btn btn-primary" id="bot-send-btn" onclick="botSend()" style="padding:8px 14px;flex-shrink:0;font-size:18px;line-height:1">↑</button>
+    </div>
+  </div>
 
   <main>
     <div id="view-dashboard" class="view"></div>

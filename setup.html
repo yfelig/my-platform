@@ -173,6 +173,17 @@
       create a project, enable Calendar API, then create an OAuth Web client ID.
     </p>
     <button class="btn btn-secondary" onclick="saveGoogleClientId()">Save Client ID</button>
+
+    <div class="divider">AI assistant</div>
+
+    <h2>Claude AI</h2>
+    <label>Anthropic API Key</label>
+    <input type="password" id="anthropicKey" placeholder="sk-ant-api03-…" />
+    <p class="hint">
+      Get one at <a href="https://console.anthropic.com" target="_blank">console.anthropic.com</a> —
+      stored locally in your browser, never sent anywhere except Anthropic's API.
+    </p>
+    <button class="btn btn-secondary" onclick="saveAnthropicKey()">Save API Key</button>
   </div>
 
   <script src="gist.js"></script>
@@ -190,6 +201,16 @@
       else localStorage.removeItem('google_client_id');
       alert('Saved! Go back to the dashboard to connect Google Calendar.');
     }
+
+    function saveAnthropicKey() {
+      const key = document.getElementById('anthropicKey').value.trim();
+      if (key) localStorage.setItem('anthropic_api_key', key);
+      else localStorage.removeItem('anthropic_api_key');
+      alert('Saved! The ✦ button in the header opens your AI assistant.');
+    }
+
+    const akey = localStorage.getItem('anthropic_api_key');
+    if (akey) document.getElementById('anthropicKey').value = akey;
 
     function showError(msg) {
       const el = document.getElementById('error');

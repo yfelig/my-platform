@@ -798,6 +798,253 @@ function fabClick() {
   else if (activeView === 'project-detail') openTaskModal(null);
 }
 
+// ── AI BOT ────────────────────────────────────────────────────────────────────
+let botHistory = [];
+let botOpen = false;
+
+function toggleBot() {
+  botOpen = !botOpen;
+  document.getElementById('bot-panel').classList.toggle('open', botOpen);
+  document.getElementById('bot-toggle-btn').classList.toggle('active', botOpen);
+  if (botOpen) {
+    setTimeout(() => document.getElementById('bot-input')?.focus(), 220);
+    if (!document.getElementById('bot-messages').children.length) {
+      botAppendMessage('assistant', "Hi! Tell me what you need — I'll create tasks and projects for you.");
+    }
+  }
+}
+
+function botAppendMessage(role, text) {
+  const el = document.getElementById('bot-messages');
+  if (!el) return;
+  const div = document.createElement('div');
+  div.className = `bot-msg bot-msg-${role}`;
+  div.textContent = text;
+  el.appendChild(div);
+  el.scrollTop = el.scrollHeight;
+}
+
+function botSetThinking(on) {
+  const el = document.getElementById('bot-messages');
+  if (!el) return;
+  const existing = document.getElementById('bot-thinking');
+  if (on && !existing) {
+    const div = document.createElement('div');
+    div.id = 'bot-thinking';
+    div.className = 'bot-msg bot-msg-assistant bot-thinking';
+    div.innerHTML = '<span></span><span></span><span></span>';
+    el.appendChild(div);
+    el.scrollTop = el.scrollHeight;
+  } else if (!on && existing) {
+    existing.remove();
+  }
+}
+
+function botInputAutoResize(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+}
+
+function botInputKeydown(e) {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    botSend();
+  }
+}
+
+async function botSend() {
+  const input = document.getElementById('bot-input');
+  const text = input?.value.trim();
+  if (!text) return;
+
+  const apiKey = localStorage.getItem('anthropic_api_key');
+  if (!apiKey) {
+    botAppendMessage('assistant', '⚠️ Add your Anthropic API key in Settings (⚙) first.');
+    return;
+  }
+
+  input.value = '';
+  input.style.height = 'auto';
+  botAppendMessage('user', text);
+  botHistory.push({ role: 'user', content: text });
+
+  const btn = document.getElementById('bot-send-btn');
+  if (btn) btn.disabled = true;
+  botSetThinking(true);
+
+  try {
+    await botCallClaude(apiKey);
+  } catch (e) {
+    botSetThinking(false);
+    botAppendMessage('assistant', `Error: ${e.message || 'Something went wrong.'}`);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+const BOT_TOOLS = [
+  {
+    name: 'create_task',
+    description: 'Create a new task. Use when the user mentions something they need to do, a to-do item, or any actionable item. Call this multiple times if multiple tasks are mentioned.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: 'Short, actionable task title' },
+        description: { type: 'string', description: 'Optional details' },
+        status: { type: 'string', enum: ['not_started', 'in_progress', 'stagnated', 'done', 'other'] },
+        urgency: { type: 'string', enum: ['low', 'medium', 'high', 'critical'] },
+        category: { type: 'string', description: 'Category such as work or personal' },
+        dueDate: { type: 'string', description: 'Due date in YYYY-MM-DD format if mentioned' },
+        projectId: { type: 'string', description: 'ID of an existing project to assign this task to' },
+      },
+      required: ['title'],
+    },
+  },
+  {
+    name: 'create_project',
+    description: 'Create a new project. Use when the user mentions a larger initiative, area of work, or collection of related tasks.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Project name' },
+        description: { type: 'string', description: 'What this project is about' },
+        status: { type: 'string', enum: ['not_started', 'in_progress', 'stagnated', 'done', 'other'] },
+        category: { type: 'string', description: 'Category such as work or personal' },
+      },
+      required: ['name'],
+    },
+  },
+];
+
+function botSystemPrompt() {
+  const today = new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+  const projectList = state.projects.length
+    ? state.projects.map(p => `- ${p.name} (id: ${p.id}, status: ${p.status}, category: ${p.category})`).join('\n')
+    : 'No projects yet.';
+  const categoryList = state.categories.join(', ');
+
+  return `You are a personal productivity assistant. Today is ${today}.
+
+When the user tells you things they need to do, immediately call create_task or create_project — don't ask for confirmation. Create multiple tasks in one response if needed.
+
+Existing projects:\n${projectList}
+
+Available categories: ${categoryList}
+
+Guidelines:
+- If a project is mentioned by name and it already exists, use its ID for the task's projectId
+- Infer urgency from language: "urgent"/"ASAP" → high or critical; "can wait"/"eventually" → low
+- Infer due dates from relative expressions ("tomorrow", "next Friday", "next week")
+- Keep task titles short and actionable (verb + object)
+- After creating items, respond with a short confirmation — don't repeat the full list
+- If the user asks a question unrelated to creating tasks, just answer it helpfully`;
+}
+
+async function botCallClaude(apiKey) {
+  const messages = [...botHistory];
+  let finalText = '';
+  let didCreateItems = false;
+
+  for (let iter = 0; iter < 8; iter++) {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-client-side-access-api-key': 'true',
+      },
+      body: JSON.stringify({
+        model: 'claude-opus-4-6',
+        max_tokens: 1024,
+        system: botSystemPrompt(),
+        tools: BOT_TOOLS,
+        messages,
+      }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error?.message || `API error ${res.status}`);
+    }
+
+    const data = await res.json();
+    const content = data.content || [];
+
+    messages.push({ role: 'assistant', content });
+
+    const textParts = content.filter(b => b.type === 'text').map(b => b.text);
+    if (textParts.length) finalText = textParts.join(' ');
+
+    const toolUses = content.filter(b => b.type === 'tool_use');
+    if (!toolUses.length || data.stop_reason === 'end_turn') break;
+
+    const toolResults = [];
+    for (const tu of toolUses) {
+      const result = botExecuteTool(tu.name, tu.input);
+      toolResults.push({ type: 'tool_result', tool_use_id: tu.id, content: result });
+      didCreateItems = true;
+    }
+
+    if (didCreateItems) {
+      await persist();
+      render();
+    }
+
+    messages.push({ role: 'user', content: toolResults });
+  }
+
+  botSetThinking(false);
+  if (finalText) {
+    botAppendMessage('assistant', finalText);
+  } else if (didCreateItems) {
+    botAppendMessage('assistant', 'Done!');
+  }
+
+  botHistory = messages;
+}
+
+function botExecuteTool(name, input) {
+  try {
+    if (name === 'create_task') {
+      const cat = state.categories.includes(input.category) ? input.category : (state.categories[0] || 'personal');
+      const projId = input.projectId && state.projects.find(p => p.id === input.projectId) ? input.projectId : null;
+      const task = {
+        id: uuid(),
+        title: input.title,
+        description: input.description || '',
+        status: input.status || 'not_started',
+        urgency: input.urgency || 'low',
+        category: cat,
+        dueDate: input.dueDate || null,
+        projectId: projId,
+        subtasks: [],
+        createdAt: new Date().toISOString(),
+      };
+      state.tasks.push(task);
+      return `Created task "${task.title}" (id: ${task.id})`;
+    }
+
+    if (name === 'create_project') {
+      const cat = state.categories.includes(input.category) ? input.category : (state.categories[0] || 'personal');
+      const project = {
+        id: uuid(),
+        name: input.name,
+        description: input.description || '',
+        status: input.status || 'not_started',
+        category: cat,
+        createdAt: new Date().toISOString(),
+      };
+      state.projects.push(project);
+      return `Created project "${project.name}" (id: ${project.id})`;
+    }
+
+    return `Unknown tool: ${name}`;
+  } catch (e) {
+    return `Error: ${e.message}`;
+  }
+}
+
 // ── INIT ──────────────────────────────────────────────────────────────────────
 async function init() {
   if (!Gist.isConfigured()) {
