@@ -184,16 +184,38 @@ main { padding: 40px 32px; max-width: 1100px; margin: 0 auto; }
   position: absolute;
   top: 0; left: 0; right: 0;
   height: 3px;
-  background: var(--grad);
-  opacity: 0;
+  background: var(--pc, var(--grad));
+  opacity: 0.6;
   transition: opacity 0.2s;
 }
 
-.project-card:hover { border-color: #3d3d52; transform: translateY(-2px); box-shadow: var(--shadow-hover); }
+.project-card:hover {
+  border-color: var(--pc, var(--accent1));
+  transform: translateY(-3px);
+  box-shadow: 0 8px 32px color-mix(in srgb, var(--pc, var(--accent1)) 25%, transparent);
+}
 .project-card:hover::before { opacity: 1; }
 
-.project-card-name { font-size: 17px; font-weight: 600; margin-bottom: 8px; }
-.project-card-desc { font-size: 13px; color: var(--text-muted); line-height: 1.6; margin-bottom: 16px; min-height: 40px; }
+.project-card-top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.project-icon {
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  flex-shrink: 0;
+  line-height: 1;
+  user-select: none;
+}
+
+.project-card-name { font-size: 17px; font-weight: 600; }
+.project-card-desc { font-size: 13px; color: var(--text-muted); line-height: 1.6; margin-bottom: 16px; min-height: 36px; }
 .project-card-footer { display: flex; align-items: center; justify-content: space-between; }
 
 .project-add-card {
@@ -281,8 +303,8 @@ main { padding: 40px 32px; max-width: 1100px; margin: 0 auto; }
   cursor: pointer;
 }
 
-.task-item:hover { border-color: #3d3d52; background: var(--surface2); }
-.task-item.done { opacity: 0.5; }
+.task-item:hover { border-color: #3d3d52; background: var(--surface2); transform: translateX(2px); }
+.task-item.done { opacity: 0.45; }
 
 .task-item .task-title {
   flex: 1;
@@ -803,3 +825,45 @@ main { padding: 40px 32px; max-width: 1100px; margin: 0 auto; }
 
 .bot-input:focus { border-color: var(--accent1); }
 .bot-input::placeholder { color: var(--text-dim); }
+
+/* ── PROJECT COLOR SWATCHES ─────────────────────────────── */
+.color-swatch {
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: transform 0.15s, box-shadow 0.15s;
+  border: 2px solid transparent;
+}
+
+.color-swatch:hover { transform: scale(1.15); }
+
+.color-swatch.selected {
+  border-color: white;
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.4);
+  transform: scale(1.1);
+}
+
+/* ── EMOJI QUICK-PICK ─────────────────────────────── */
+.emoji-pick {
+  font-size: 18px;
+  cursor: pointer;
+  padding: 2px 3px;
+  border-radius: 6px;
+  transition: background 0.1s, transform 0.1s;
+  line-height: 1.3;
+}
+
+.emoji-pick:hover { background: var(--surface2); transform: scale(1.2); }
+
+/* ── PROJECT DETAIL TITLE COLOR ─────────────────────────────── */
+.page-title[style*="color"] {
+  -webkit-text-fill-color: unset;
+  background: none;
+}
+
+/* ── TASK ITEM LEFT BORDER RADIUS FIX ─────────────────────────────── */
+.task-item[style*="border-left"] {
+  border-radius: 0 var(--radius) var(--radius) 0;
+  padding-left: 15px;
+}

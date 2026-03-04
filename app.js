@@ -78,6 +78,23 @@ const STATUS_LABELS = {
 const STATUS_CYCLE = ['not_started', 'in_progress', 'stagnated', 'done', 'other'];
 const URGENCY_LABELS = { low: 'Low', medium: 'Medium', high: 'High', critical: 'Critical' };
 
+// ── PROJECT COLORS ────────────────────────────────────────────────────────────
+const PROJECT_COLORS = [
+  '#7c3aed', '#3b82f6', '#06b6d4', '#10b981',
+  '#f59e0b', '#f43f5e', '#f97316', '#ec4899',
+];
+
+function projectColor(p) {
+  return p?.color || PROJECT_COLORS[0];
+}
+
+function projectIconHTML(p, size = 40) {
+  const color = projectColor(p);
+  const label = p.emoji || (p.name?.[0] || '?').toUpperCase();
+  const fs = Math.round(size * (p.emoji ? 0.55 : 0.42));
+  return `<div class="project-icon" style="width:${size}px;height:${size}px;font-size:${fs}px;background:${color}22;color:${color};border:1.5px solid ${color}44;">${label}</div>`;
+}
+
 // ── PILL HELPERS ──────────────────────────────────────────────────────────────
 function statusPill(s, taskId) {
   const clickable = taskId
@@ -324,16 +341,22 @@ function renderDashboard() {
 
 // ── PROJECTS ──────────────────────────────────────────────────────────────────
 function renderProjects() {
-  const cards = state.projects.map(p => `
-    <div class="project-card" onclick="navigate('project-detail','${p.id}')">
-      <div class="project-card-name">${p.name}</div>
-      <div class="project-card-desc">${p.description || 'No description'}</div>
-      <div class="project-card-footer">
-        ${statusPill(p.status)}
-        ${catPill(p.category)}
+  const cards = state.projects.map(p => {
+    const color = projectColor(p);
+    return `
+      <div class="project-card" style="--pc:${color}" onclick="navigate('project-detail','${p.id}')">
+        <div class="project-card-top">
+          ${projectIconHTML(p)}
+          <div class="project-card-name">${p.name}</div>
+        </div>
+        <div class="project-card-desc">${p.description || 'No description'}</div>
+        <div class="project-card-footer">
+          ${statusPill(p.status)}
+          ${catPill(p.category)}
+        </div>
       </div>
-    </div>
-  `).join('');
+    `;
+  }).join('');
 
   document.getElementById('view-projects').innerHTML = `
     <div class="page-header">
@@ -359,12 +382,16 @@ function renderProjectDetail() {
   const done = projectTasks.filter(t => t.status === 'done');
   const sorted = [...active, ...done];
 
+  const pColor = projectColor(p);
   document.getElementById('view-project-detail').innerHTML = `
     <button class="back-btn" onclick="navigate('projects')">← Projects</button>
     <div class="page-header">
-      <div>
-        <h1 class="page-title"><span>${p.name}</span></h1>
-        ${p.description ? `<p style="color:var(--text-muted);font-size:14px;margin-top:6px">${p.description}</p>` : ''}
+      <div style="display:flex;align-items:center;gap:14px">
+        ${projectIconHTML(p, 48)}
+        <div>
+          <h1 class="page-title" style="color:${pColor}">${p.name}</h1>
+          ${p.description ? `<p style="color:var(--text-muted);font-size:14px;margin-top:4px">${p.description}</p>` : ''}
+        </div>
       </div>
       <div style="display:flex;gap:8px;align-items:center">
         ${statusPill(p.status)}
@@ -459,8 +486,11 @@ function taskItemHTML(t) {
     ? `<span class="subtask-count">${subtasksDone}/${subtasks.length} subtasks</span>`
     : '';
 
+  const proj = t.projectId ? state.projects.find(p => p.id === t.projectId) : null;
+  const accentStyle = proj ? `border-left: 3px solid ${projectColor(proj)};` : '';
+
   return `
-    <div class="task-item ${isDone ? 'done' : ''}" onclick="openTaskModal(event,'${t.id}')">
+    <div class="task-item ${isDone ? 'done' : ''}" style="${accentStyle}" onclick="openTaskModal(event,'${t.id}')">
       <div class="task-checkbox ${isDone ? 'checked' : ''}" onclick="toggleDone(event,'${t.id}')"></div>
       <div class="task-body">
         <div class="task-title ${isDone ? 'done-text' : ''}">${t.title}</div>
@@ -725,15 +755,39 @@ async function saveTask(id) {
 function openProjectModal(id) {
   const p = id ? state.projects.find(x => x.id === id) : null;
 
+  const currentColor = p?.color || PROJECT_COLORS[state.projects.length % PROJECT_COLORS.length];
+
   showModal(`
     <div class="modal-title">${p ? 'Edit Project' : 'New Project'}</div>
-    <div class="field">
-      <label>Name</label>
-      <input id="p-name" type="text" value="${p ? p.name : ''}" placeholder="Project name" />
+    <div class="field-row">
+      <div class="field" style="flex:0 0 auto">
+        <label>Icon</label>
+        <input id="p-emoji" type="text" value="${p?.emoji || ''}" placeholder="🚀" maxlength="2"
+          style="width:64px;text-align:center;font-size:22px;padding:8px;" />
+        <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:8px;max-width:160px;">
+          ${['🚀','💼','🎯','📌','🌟','💡','🏆','🎨','📚','🔧','🌱','💪','🎵','🏠','✈️','🍀'].map(e =>
+            `<span class="emoji-pick" onclick="document.getElementById('p-emoji').value='${e}'" title="${e}">${e}</span>`
+          ).join('')}
+        </div>
+      </div>
+      <div class="field" style="flex:1">
+        <label>Name</label>
+        <input id="p-name" type="text" value="${p ? p.name : ''}" placeholder="Project name" />
+        <label style="margin-top:14px;display:block">Color</label>
+        <input type="hidden" id="p-color" value="${currentColor}" />
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">
+          ${PROJECT_COLORS.map(c => `
+            <div class="color-swatch ${c === currentColor ? 'selected' : ''}"
+              style="background:${c}"
+              onclick="document.querySelectorAll('.color-swatch').forEach(s=>s.classList.remove('selected'));this.classList.add('selected');document.getElementById('p-color').value='${c}'">
+            </div>
+          `).join('')}
+        </div>
+      </div>
     </div>
     <div class="field">
       <label>Description</label>
-      <textarea id="p-desc" rows="3" placeholder="What's this project about?">${p ? p.description : ''}</textarea>
+      <textarea id="p-desc" rows="2" placeholder="What's this project about?">${p ? p.description : ''}</textarea>
     </div>
     <div class="field-row">
       <div class="field">
@@ -768,12 +822,14 @@ async function saveProject(id) {
   const description = document.getElementById('p-desc').value.trim();
   const status = document.getElementById('p-status').value;
   const category = document.getElementById('p-category').value;
+  const emoji = document.getElementById('p-emoji').value.trim();
+  const color = document.getElementById('p-color').value || PROJECT_COLORS[state.projects.length % PROJECT_COLORS.length];
 
   if (id) {
     const p = state.projects.find(x => x.id === id);
-    if (p) Object.assign(p, { name, description, status, category });
+    if (p) Object.assign(p, { name, description, status, category, emoji, color });
   } else {
-    state.projects.push({ id: uuid(), name, description, status, category, createdAt: new Date().toISOString() });
+    state.projects.push({ id: uuid(), name, description, status, category, emoji, color, createdAt: new Date().toISOString() });
   }
 
   closeModal();
