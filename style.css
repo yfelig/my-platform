@@ -1155,3 +1155,81 @@ main { padding: 40px 32px; max-width: 1100px; margin: 0 auto; }
   text-align: center;
   padding: 20px 0;
 }
+
+/* ── POMO ROUND LABEL ───────────────────── */
+.pomo-round-label {
+  font-size: 12px;
+  color: #6b7280;
+  text-align: center;
+  margin-top: 4px;
+  letter-spacing: 0.03em;
+}
+
+/* ── TOAST ──────────────────────────────── */
+#toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%) translateY(80px);
+  background: #22222e;
+  border: 1px solid #2a2a38;
+  border-radius: 12px;
+  padding: 12px 20px;
+  font-size: 14px;
+  color: #e8e8f0;
+  z-index: 9999;
+  max-width: 420px;
+  text-align: center;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+  opacity: 0;
+  transition: opacity 0.25s, transform 0.25s;
+  pointer-events: none;
+}
+#toast.show {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+  pointer-events: auto;
+}
+#toast.toast-error { border-color: #7f1d1d; background: #2d1b1b; color: #fca5a5; }
+#toast.toast-success { border-color: #14532d; background: #1a2e1a; color: #86efac; }
+#toast.toast-info { border-color: #1e3a5f; background: #1a2030; color: #93c5fd; }
+
+/* ── QUICK DATES ────────────────────────── */
+.quick-dates {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+  flex-wrap: wrap;
+}
+.quick-date-btn {
+  font-size: 11px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid #2a2a38;
+  background: #0f0f13;
+  color: #9ca3af;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+.quick-date-btn:hover { border-color: #7c3aed; color: #c4b5fd; }
+
+/* ── UNDO TOAST LINK ────────────────────── */
+#toast a {
+  color: #c4b5fd;
+  text-decoration: underline;
+  cursor: pointer;
+  margin-left: 8px;
+}
+
+/* ── BOT CLEAR BTN ──────────────────────── */
+.bot-clear-btn {
+  font-size: 11px;
+  color: #4b5563;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 6px;
+  transition: color 0.15s;
+}
+.bot-clear-btn:hover { color: #9ca3af; }

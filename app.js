@@ -22,6 +22,24 @@ function isDuePast(dueDate) {
   return new Date(dueDate) < today;
 }
 
+function escapeHtml(str) {
+  return String(str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+let _toastTimer = null;
+function showToast(msg, type = 'info', duration = 3500) {
+  let el = document.getElementById('toast');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'toast';
+    document.body.appendChild(el);
+  }
+  el.className = `toast toast-${type} show`;
+  el.innerHTML = msg; // caller is responsible for safe content
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => el.classList.remove('show'), duration);
+}
+
 // ── PERSISTENCE ───────────────────────────────────────────────────────────────
 async function loadData() {
   try {
@@ -29,6 +47,7 @@ async function loadData() {
     if (!state.categories) state.categories = ['work', 'personal'];
   } catch (e) {
     console.error('Load failed', e);
+    showToast('⚠️ Could not load data — check your GitHub token in Settings.', 'error', 6000);
   }
 }
 
@@ -36,7 +55,10 @@ async function persist() {
   if (saving) return;
   saving = true;
   try { await Gist.save(state); }
-  catch (e) { console.error('Save failed', e); }
+  catch (e) {
+    console.error('Save failed', e);
+    showToast('⚠️ Save failed — check your connection and GitHub token.', 'error', 6000);
+  }
   finally { saving = false; }
 }
 
@@ -91,7 +113,7 @@ function projectColor(p) {
 
 function projectIconHTML(p, size = 40) {
   const color = projectColor(p);
-  const label = p.emoji || (p.name?.[0] || '?').toUpperCase();
+  const label = escapeHtml(p.emoji || (p.name?.[0] || '?').toUpperCase());
   const fs = Math.round(size * (p.emoji ? 0.55 : 0.42));
   return `<div class="project-icon" style="width:${size}px;height:${size}px;font-size:${fs}px;background:${color}22;color:${color};border:1.5px solid ${color}44;">${label}</div>`;
 }
@@ -146,12 +168,14 @@ async function loadWeather() {
   const iconEl = document.getElementById('weather-icon');
   if (!valEl) return;
 
-  // Serve from cache if fresh (30 min)
+  // Serve from cache if fresh (30 min) — no network hit
   const cached = JSON.parse(localStorage.getItem('wx_cache') || 'null');
   if (cached && Date.now() - cached.ts < 30 * 60 * 1000) {
-    valEl.textContent = cached.text;
-    valEl.classList.remove('muted');
-    if (iconEl) iconEl.textContent = cached.icon;
+    if (valEl.textContent !== cached.text) {
+      valEl.textContent = cached.text;
+      valEl.classList.remove('muted');
+      if (iconEl) iconEl.textContent = cached.icon;
+    }
     return;
   }
 
@@ -175,6 +199,7 @@ async function loadWeather() {
 
 // ── GOOGLE CALENDAR ───────────────────────────────────────────────────────────
 let _tokenClient = null;
+let _calLastLoaded = 0;
 
 function getValidGoogleToken() {
   const token = localStorage.getItem('google_access_token');
@@ -186,6 +211,11 @@ function getValidGoogleToken() {
 async function loadCalendar() {
   const el = document.getElementById('calendar-widget-body');
   if (!el) return;
+
+  // Throttle: skip re-fetch if we loaded calendar within the last 60s
+  const token2 = getValidGoogleToken();
+  if (token2 && Date.now() - _calLastLoaded < 60 * 1000) return;
+  if (token2) _calLastLoaded = Date.now();
 
   const clientId = localStorage.getItem('google_client_id') || '';
   if (!clientId) {
@@ -267,6 +297,7 @@ async function fetchAndDisplayCalendar(token, el) {
 function renderDashboard() {
   const now = new Date();
   const dateStr = now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+  const userName = escapeHtml(localStorage.getItem('user_name') || 'there');
 
   const total = state.tasks.length;
   const done = state.tasks.filter(t => t.status === 'done').length;
@@ -281,7 +312,7 @@ function renderDashboard() {
   document.getElementById('view-dashboard').innerHTML = `
     <div class="page-header">
       <div>
-        <h1 class="page-title">Good to see you, <span>Yair</span> 👋</h1>
+        <h1 class="page-title">Good to see you, <span>${userName}</span> 👋</h1>
         <div class="dashboard-date">${dateStr}</div>
       </div>
     </div>
@@ -511,7 +542,17 @@ function bindTaskEvents() {}
 // ── FILTERS ───────────────────────────────────────────────────────────────────
 function setFilter(key, val) {
   filters[key] = val;
+  localStorage.setItem('filters', JSON.stringify(filters));
   renderTasks();
+}
+
+function setQuickDate(daysFromNow) {
+  const input = document.getElementById('m-due');
+  if (!input) return;
+  if (daysFromNow < 0) { input.value = ''; return; }
+  const d = new Date();
+  d.setDate(d.getDate() + daysFromNow);
+  input.value = d.toISOString().split('T')[0];
 }
 
 async function addCategory() {
@@ -549,12 +590,18 @@ function showStatusPicker(e, taskId) {
   `).join('');
   document.body.appendChild(picker);
 
-  // Position below the clicked pill, clamp to viewport
+  // Position below the clicked pill, clamp to viewport edges
   const rect = e.currentTarget.getBoundingClientRect();
   const pickerW = 160;
+  const pickerH = STATUS_CYCLE.length * 38 + 8; // approximate picker height
   let left = rect.left + window.scrollX;
   if (left + pickerW > window.innerWidth - 8) left = window.innerWidth - pickerW - 8;
-  picker.style.top = `${rect.bottom + window.scrollY + 6}px`;
+  if (left < 8) left = 8;
+  let top = rect.bottom + window.scrollY + 6;
+  if (rect.bottom + pickerH > window.innerHeight - 8) {
+    top = rect.top + window.scrollY - pickerH - 6; // flip above if no room below
+  }
+  picker.style.top = `${top}px`;
   picker.style.left = `${left}px`;
 
   setTimeout(() => document.addEventListener('click', () => document.getElementById('status-picker')?.remove(), { once: true }), 0);
@@ -570,28 +617,67 @@ async function setTaskStatus(e, taskId, status) {
   render();
 }
 
+let _pendingDelete = null;
+
+function _cancelPendingDelete() {
+  if (_pendingDelete) {
+    clearTimeout(_pendingDelete.timer);
+    _pendingDelete = null;
+  }
+}
+
+function undoDelete() {
+  if (!_pendingDelete) return;
+  clearTimeout(_pendingDelete.timer);
+  // Restore
+  if (_pendingDelete.tasks) state.tasks = _pendingDelete.tasks;
+  if (_pendingDelete.projects) state.projects = _pendingDelete.projects;
+  _pendingDelete = null;
+  render();
+  // Hide toast
+  document.getElementById('toast')?.classList.remove('show');
+}
+
 async function deleteTask(e, id) {
   e.stopPropagation();
-  if (!confirm('Delete this task?')) return;
+  _cancelPendingDelete();
+  const snapshot = [...state.tasks];
   state.tasks = state.tasks.filter(t => t.id !== id);
-  await persist();
   render();
+  showToast(`Task deleted. <a onclick="undoDelete()" href="#">Undo</a>`, 'info', 5000);
+  _pendingDelete = {
+    tasks: snapshot,
+    timer: setTimeout(async () => { _pendingDelete = null; await persist(); }, 4500),
+  };
 }
 
 async function deleteTaskFromModal(id) {
-  if (!confirm('Delete this task?')) return;
+  _cancelPendingDelete();
+  const snapshot = [...state.tasks];
   state.tasks = state.tasks.filter(t => t.id !== id);
   closeModal();
-  await persist();
   render();
+  showToast(`Task deleted. <a onclick="undoDelete()" href="#">Undo</a>`, 'info', 5000);
+  _pendingDelete = {
+    tasks: snapshot,
+    timer: setTimeout(async () => { _pendingDelete = null; await persist(); }, 4500),
+  };
 }
 
 async function deleteProject(id) {
   if (!confirm('Delete this project and all its tasks?')) return;
+  _cancelPendingDelete();
+  const snapshotProjects = [...state.projects];
+  const snapshotTasks = [...state.tasks];
   state.projects = state.projects.filter(p => p.id !== id);
   state.tasks = state.tasks.filter(t => t.projectId !== id);
-  await persist();
   navigate('projects');
+  showToast(`Project deleted. <a onclick="undoDelete()" href="#">Undo</a>`, 'info', 5000);
+  _pendingDelete = {
+    projects: snapshotProjects,
+    tasks: snapshotTasks,
+    timer: setTimeout(async () => { _pendingDelete = null; await persist(); }, 4500),
+  };
 }
 
 // ── SUBTASK EDITING ────────────────────────────────────────────────────────────
@@ -628,6 +714,7 @@ function removeEditSubtask(i) {
 // ── TASK MODAL ────────────────────────────────────────────────────────────────
 function openTaskModal(e, id) {
   if (e) e.stopPropagation();
+  _subtasks = []; // reset early so a failed lookup doesn't leak previous state
   const task = id ? state.tasks.find(t => t.id === id) : null;
 
   const contextProject = activeView === 'project-detail'
@@ -684,6 +771,12 @@ function openTaskModal(e, id) {
       <div class="field">
         <label>Due Date</label>
         <input id="m-due" type="date" value="${task?.dueDate || ''}" />
+        <div class="quick-dates">
+          <button type="button" class="quick-date-btn" onclick="setQuickDate(0)">Today</button>
+          <button type="button" class="quick-date-btn" onclick="setQuickDate(1)">Tomorrow</button>
+          <button type="button" class="quick-date-btn" onclick="setQuickDate(7)">+1 week</button>
+          <button type="button" class="quick-date-btn" onclick="setQuickDate(-1)">Clear</button>
+        </div>
       </div>
     </div>
 
@@ -859,6 +952,13 @@ function fabClick() {
 let botHistory = [];
 let botOpen = false;
 
+function botClear() {
+  botHistory = [];
+  const el = document.getElementById('bot-messages');
+  if (el) el.innerHTML = '';
+  botAppendMessage('assistant', "Hi! Tell me what you need — I'll create tasks and projects for you.");
+}
+
 function toggleBot() {
   botOpen = !botOpen;
   document.getElementById('bot-panel').classList.toggle('open', botOpen);
@@ -924,7 +1024,14 @@ async function botSend() {
 
   const config = getBotConfig();
   if (!config.apiKey) {
-    botAppendMessage('assistant', '⚠️ Add your AI API key in Settings (⚙) first.');
+    const el = document.getElementById('bot-messages');
+    if (el) {
+      const div = document.createElement('div');
+      div.className = 'bot-msg bot-msg-assistant';
+      div.innerHTML = '⚠️ Add your AI API key in <a href="setup.html" style="color:#c4b5fd;text-decoration:underline">Settings</a> first.';
+      el.appendChild(div);
+      el.scrollTop = el.scrollHeight;
+    }
     return;
   }
 
@@ -1237,6 +1344,14 @@ function botExecuteTool(name, input) {
 // ── POMODORO ──────────────────────────────────────────────────────────────────
 const POMO_CIRC = 552.9; // 2π × r=88
 
+function _pomoClearInterval() {
+  if (pomo._interval !== null) {
+    clearInterval(pomo._interval);
+    pomo._interval = null;
+  }
+  pomo.running = false;
+}
+
 const pomo = {
   mode: 'work',
   secondsLeft: 25 * 60,
@@ -1255,22 +1370,17 @@ function pomoModeDuration(mode) {
 }
 
 function pomoSetMode(mode) {
-  if (pomo.running) {
-    clearInterval(pomo._interval);
-    pomo._interval = null;
-    pomo.running = false;
-  }
+  _pomoClearInterval();
   pomo.mode = mode;
   pomo.secondsLeft = pomoModeDuration(mode);
   pomo.totalSeconds = pomo.secondsLeft;
+  pomoSave();
   renderPomodoro();
 }
 
 function pomoToggle() {
   if (pomo.running) {
-    clearInterval(pomo._interval);
-    pomo._interval = null;
-    pomo.running = false;
+    _pomoClearInterval();
   } else {
     pomo.running = true;
     pomo._interval = setInterval(pomoTick, 1000);
@@ -1279,11 +1389,7 @@ function pomoToggle() {
 }
 
 function pomoReset() {
-  if (pomo.running) {
-    clearInterval(pomo._interval);
-    pomo._interval = null;
-    pomo.running = false;
-  }
+  _pomoClearInterval();
   pomo.secondsLeft = pomoModeDuration(pomo.mode);
   pomo.totalSeconds = pomo.secondsLeft;
   updatePomoDisplay();
@@ -1299,9 +1405,7 @@ function pomoTick() {
 }
 
 function pomoComplete() {
-  clearInterval(pomo._interval);
-  pomo._interval = null;
-  pomo.running = false;
+  _pomoClearInterval();
   pomoBeep();
 
   if (pomo.mode === 'work') {
@@ -1323,6 +1427,7 @@ function pomoComplete() {
   }
   pomo.secondsLeft = pomoModeDuration(pomo.mode);
   pomo.totalSeconds = pomo.secondsLeft;
+  pomoSave();
   renderPomodoro();
 }
 
@@ -1360,8 +1465,44 @@ function updatePomoDisplay() {
   if (btn) btn.textContent = pomo.running ? 'Pause' : (pomo.secondsLeft < pomo.totalSeconds ? 'Resume' : 'Start');
 }
 
+function pomoSave() {
+  const todayStr = new Date().toISOString().split('T')[0];
+  localStorage.setItem('pomo_state', JSON.stringify({
+    mode: pomo.mode,
+    round: pomo.round,
+    totalToday: pomo.totalToday,
+    history: pomo.history,
+    cfg: pomo.cfg,
+    taskId: pomo.taskId,
+    savedDate: todayStr,
+  }));
+}
+
+function pomoRestore() {
+  try {
+    const raw = localStorage.getItem('pomo_state');
+    if (!raw) return;
+    const saved = JSON.parse(raw);
+    const todayStr = new Date().toISOString().split('T')[0];
+    const sameDay = saved.savedDate === todayStr;
+
+    pomo.cfg = { work: 25, short: 5, long: 15, ...saved.cfg };
+    pomo.mode = saved.mode || 'work';
+    pomo.round = sameDay ? (saved.round || 0) : 0;
+    pomo.totalToday = sameDay ? (saved.totalToday || 0) : 0;
+    pomo.history = sameDay ? (saved.history || []) : [];
+    pomo.taskId = saved.taskId || null;
+    // Always reset timer to full duration (don't restore partial timer)
+    pomo.secondsLeft = pomoModeDuration(pomo.mode);
+    pomo.totalSeconds = pomo.secondsLeft;
+    pomo.running = false;
+    pomo._interval = null;
+  } catch (e) { /* ignore corrupt state */ }
+}
+
 function pomoSelectTask(id) {
   pomo.taskId = id || null;
+  pomoSave();
 }
 
 function pomoCfgChange(key, val) {
@@ -1373,6 +1514,7 @@ function pomoCfgChange(key, val) {
       pomo.totalSeconds = pomo.secondsLeft;
       updatePomoDisplay();
     }
+    pomoSave();
   }
 }
 
@@ -1390,10 +1532,13 @@ function renderPomodoro() {
   const s = String(pomo.secondsLeft % 60).padStart(2, '0');
   const btnLabel = pomo.running ? 'Pause' : (pomo.secondsLeft < pomo.totalSeconds ? 'Resume' : 'Start');
 
-  // Round dots
+  // Round dots + label
   const dots = Array.from({ length: 4 }, (_, i) =>
     `<div class="pomo-dot ${i < pomo.round ? 'filled' : ''}" style="${i < pomo.round ? `background:${color};border-color:${color};` : ''}"></div>`
   ).join('');
+  const roundLabel = pomo.mode === 'work'
+    ? `Session ${pomo.round + 1} of 4`
+    : (pomo.mode === 'long' ? 'Long break — great work!' : 'Short break');
 
   // Task selector
   const activeTasks = state.tasks.filter(t => t.status !== 'done');
@@ -1446,6 +1591,7 @@ function renderPomodoro() {
         </div>
 
         <div class="pomo-rounds">${dots}</div>
+        <div class="pomo-round-label">${roundLabel}</div>
 
         <div class="pomo-controls">
           <button class="btn btn-ghost pomo-reset-btn" onclick="pomoReset()" title="Reset">↺</button>
@@ -1488,6 +1634,13 @@ async function init() {
     window.location.href = 'setup.html';
     return;
   }
+
+  // Restore persisted UI state
+  try {
+    const savedFilters = JSON.parse(localStorage.getItem('filters') || 'null');
+    if (savedFilters) Object.assign(filters, savedFilters);
+  } catch (e) {}
+  pomoRestore();
 
   await loadData();
   navigate('dashboard');

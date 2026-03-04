@@ -28,7 +28,10 @@
   <div id="bot-panel" class="bot-panel">
     <div class="bot-header">
       <div class="bot-title">✦ AI Assistant</div>
-      <button class="btn btn-ghost btn-sm" onclick="toggleBot()" style="padding:4px 10px;line-height:1">✕</button>
+      <div style="display:flex;align-items:center;gap:4px">
+        <button class="bot-clear-btn" onclick="botClear()" title="Clear conversation">Clear</button>
+        <button class="btn btn-ghost btn-sm" onclick="toggleBot()" style="padding:4px 10px;line-height:1">✕</button>
+      </div>
     </div>
     <div class="bot-messages" id="bot-messages"></div>
     <div class="bot-input-row">

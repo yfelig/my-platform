@@ -163,6 +163,13 @@
 
     <button class="btn btn-secondary" onclick="connectExisting()">Connect existing Gist</button>
 
+    <div class="divider">your profile</div>
+
+    <h2>Your Name</h2>
+    <label>Display Name</label>
+    <input type="text" id="userName" placeholder="e.g. Alex" />
+    <button class="btn btn-secondary" onclick="saveUserName()">Save Name</button>
+
     <div class="divider">optional integrations</div>
 
     <h2>Google Calendar</h2>
@@ -207,6 +214,15 @@
     if (cfg.gistId) document.getElementById('gistId').value = cfg.gistId;
     const gcid = localStorage.getItem('google_client_id');
     if (gcid) document.getElementById('googleClientId').value = gcid;
+    const uname = localStorage.getItem('user_name');
+    if (uname) document.getElementById('userName').value = uname;
+
+    function saveUserName() {
+      const n = document.getElementById('userName').value.trim();
+      if (n) localStorage.setItem('user_name', n);
+      else localStorage.removeItem('user_name');
+      alert('Name saved!');
+    }
 
     function saveGoogleClientId() {
       const id = document.getElementById('googleClientId').value.trim();
