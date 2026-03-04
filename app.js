@@ -4,6 +4,7 @@ let filters = { status: 'all', category: 'all' };
 let activeView = 'dashboard';
 let activeProjectId = null;
 let saving = false;
+let _subtasks = []; // temp state while editing subtasks in modal
 
 // ── UTILS ─────────────────────────────────────────────────────────────────────
 function uuid() {
@@ -12,6 +13,13 @@ function uuid() {
 
 function fmt(iso) {
   return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+function isDuePast(dueDate) {
+  if (!dueDate) return false;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return new Date(dueDate) < today;
 }
 
 // ── PERSISTENCE ───────────────────────────────────────────────────────────────
@@ -44,7 +52,6 @@ function navigate(view, projectId) {
   const el = document.getElementById(`view-${view}`);
   if (el) el.classList.add('active');
 
-  // Show/hide FAB
   const fab = document.getElementById('fab');
   if (fab) fab.style.display = ['tasks', 'projects', 'project-detail'].includes(view) ? 'flex' : 'none';
 
@@ -59,7 +66,7 @@ function render() {
   if (activeView === 'tasks') renderTasks();
 }
 
-// STATUS / CATEGORY HELPERS
+// ── LABEL MAPS ────────────────────────────────────────────────────────────────
 const STATUS_LABELS = {
   not_started: 'Not Started',
   in_progress: 'In Progress',
@@ -68,16 +75,30 @@ const STATUS_LABELS = {
   other: 'Other',
 };
 
-function statusPill(s) {
-  return `<span class="pill pill-status-${s}">${STATUS_LABELS[s] || s}</span>`;
+const STATUS_CYCLE = ['not_started', 'in_progress', 'stagnated', 'done', 'other'];
+
+const URGENCY_LABELS = { low: 'Low', medium: 'Medium', high: 'High', critical: 'Critical' };
+
+// ── PILL HELPERS ──────────────────────────────────────────────────────────────
+function statusPill(s, taskId) {
+  const clickable = taskId ? `onclick="cycleStatus(event,'${taskId}')" title="Tap to change status" style="cursor:pointer"` : '';
+  return `<span class="pill pill-status-${s}" ${clickable}>${STATUS_LABELS[s] || s}</span>`;
 }
 
 function catPill(c) {
   return `<span class="pill pill-cat">${c}</span>`;
 }
 
+function urgencyBadge(u) {
+  if (!u || u === 'low') return '';
+  return `<span class="urgency-badge urgency-${u}">${URGENCY_LABELS[u]}</span>`;
+}
+
 // ── DASHBOARD ─────────────────────────────────────────────────────────────────
 function renderDashboard() {
+  const now = new Date();
+  const dateStr = now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+
   const total = state.tasks.length;
   const done = state.tasks.filter(t => t.status === 'done').length;
   const inProgress = state.tasks.filter(t => t.status === 'in_progress').length;
@@ -90,7 +111,27 @@ function renderDashboard() {
 
   document.getElementById('view-dashboard').innerHTML = `
     <div class="page-header">
-      <h1 class="page-title">Good to see you, <span>Yair</span> 👋</h1>
+      <div>
+        <h1 class="page-title">Good to see you, <span>Yair</span> 👋</h1>
+        <div class="dashboard-date">${dateStr}</div>
+      </div>
+    </div>
+
+    <div class="dashboard-widgets">
+      <div class="widget">
+        <div class="widget-icon">🌤</div>
+        <div class="widget-body">
+          <div class="widget-label">Weather</div>
+          <div class="widget-value muted">Connect in settings</div>
+        </div>
+      </div>
+      <div class="widget">
+        <div class="widget-icon">📅</div>
+        <div class="widget-body">
+          <div class="widget-label">Today's Schedule</div>
+          <div class="widget-value muted">Connect Gmail in settings</div>
+        </div>
+      </div>
     </div>
 
     <div class="stats-row">
@@ -252,14 +293,31 @@ function renderTasks() {
 // ── TASK ITEM HTML ─────────────────────────────────────────────────────────────
 function taskItemHTML(t) {
   const isDone = t.status === 'done';
+  const overdue = !isDone && isDuePast(t.dueDate);
+  const subtasks = t.subtasks || [];
+  const subtasksDone = subtasks.filter(s => s.done).length;
+
+  const dueMeta = t.dueDate ? `
+    <span class="due-badge ${overdue ? 'overdue' : ''}">
+      📅 ${fmt(t.dueDate)}${overdue ? ' overdue' : ''}
+    </span>
+  ` : '';
+
+  const subtaskMeta = subtasks.length ? `
+    <span class="subtask-count">${subtasksDone}/${subtasks.length} subtasks</span>
+  ` : '';
+
   return `
-    <div class="task-item ${isDone ? 'done' : ''}" data-id="${t.id}">
+    <div class="task-item ${isDone ? 'done' : ''}" onclick="openTaskModal(event,'${t.id}')">
       <div class="task-checkbox ${isDone ? 'checked' : ''}" onclick="toggleDone(event,'${t.id}')"></div>
-      <div class="task-title ${isDone ? 'done-text' : ''}">${t.title}</div>
+      <div class="task-body">
+        <div class="task-title ${isDone ? 'done-text' : ''}">${t.title}</div>
+        ${dueMeta || subtaskMeta ? `<div class="task-submeta">${dueMeta}${subtaskMeta}</div>` : ''}
+      </div>
       <div class="task-meta">
-        ${statusPill(t.status)}
+        ${statusPill(t.status, t.id)}
+        ${urgencyBadge(t.urgency)}
         ${catPill(t.category)}
-        <button class="btn btn-ghost btn-sm btn-icon" onclick="openTaskModal(event,'${t.id}')">✎</button>
         <button class="btn btn-ghost btn-sm btn-icon" style="color:#f87171" onclick="deleteTask(event,'${t.id}')">✕</button>
       </div>
     </div>
@@ -295,6 +353,16 @@ async function toggleDone(e, id) {
   render();
 }
 
+async function cycleStatus(e, id) {
+  e.stopPropagation();
+  const task = state.tasks.find(t => t.id === id);
+  if (!task) return;
+  const idx = STATUS_CYCLE.indexOf(task.status);
+  task.status = STATUS_CYCLE[(idx + 1) % STATUS_CYCLE.length];
+  await persist();
+  render();
+}
+
 async function deleteTask(e, id) {
   e.stopPropagation();
   if (!confirm('Delete this task?')) return;
@@ -311,52 +379,135 @@ async function deleteProject(id) {
   navigate('projects');
 }
 
+// ── SUBTASK EDITING (in modal) ─────────────────────────────────────────────────
+function renderSubtaskList() {
+  const el = document.getElementById('m-subtasks-list');
+  if (!el) return;
+  el.innerHTML = _subtasks.length ? _subtasks.map((s, i) => `
+    <div class="subtask-row">
+      <div class="subtask-check ${s.done ? 'checked' : ''}" onclick="toggleEditSubtask(${i})"></div>
+      <span class="subtask-label ${s.done ? 'done-text' : ''}">${s.title}</span>
+      <button class="subtask-del" onclick="removeEditSubtask(${i})">✕</button>
+    </div>
+  `).join('') : '<div class="subtask-empty">No subtasks yet</div>';
+}
+
+function addEditSubtask() {
+  const input = document.getElementById('m-subtask-input');
+  if (!input || !input.value.trim()) return;
+  _subtasks.push({ id: uuid(), title: input.value.trim(), done: false });
+  input.value = '';
+  renderSubtaskList();
+}
+
+function toggleEditSubtask(i) {
+  _subtasks[i].done = !_subtasks[i].done;
+  renderSubtaskList();
+}
+
+function removeEditSubtask(i) {
+  _subtasks.splice(i, 1);
+  renderSubtaskList();
+}
+
 // ── TASK MODAL ────────────────────────────────────────────────────────────────
 function openTaskModal(e, id) {
   if (e) e.stopPropagation();
   const task = id ? state.tasks.find(t => t.id === id) : null;
+
+  // Determine context defaults (when adding from inside a project)
+  const contextProject = activeView === 'project-detail'
+    ? state.projects.find(p => p.id === activeProjectId)
+    : null;
+
+  const defaultProjectId = task?.projectId || contextProject?.id || '';
+  const defaultCategory = task?.category || contextProject?.category || state.categories[0] || '';
+  const defaultStatus = task?.status || 'not_started';
+  const defaultUrgency = task?.urgency || 'low';
+
+  _subtasks = task?.subtasks ? task.subtasks.map(s => ({ ...s })) : [];
+
   const projectOptions = state.projects.map(p =>
-    `<option value="${p.id}" ${task?.projectId === p.id ? 'selected' : ''}>${p.name}</option>`
+    `<option value="${p.id}" ${defaultProjectId === p.id ? 'selected' : ''}>${p.name}</option>`
   ).join('');
 
   showModal(`
     <div class="modal-title">${task ? 'Edit Task' : 'New Task'}</div>
+
     <div class="field">
       <label>Title</label>
       <input id="m-title" type="text" value="${task ? task.title : ''}" placeholder="What needs to be done?" />
     </div>
-    <div class="field">
-      <label>Status</label>
-      <select id="m-status">
-        ${Object.entries(STATUS_LABELS).map(([v, l]) =>
-          `<option value="${v}" ${task?.status === v ? 'selected' : ''}>${l}</option>`
-        ).join('')}
-      </select>
+
+    <div class="field-row">
+      <div class="field">
+        <label>Status</label>
+        <select id="m-status">
+          ${Object.entries(STATUS_LABELS).map(([v, l]) =>
+            `<option value="${v}" ${defaultStatus === v ? 'selected' : ''}>${l}</option>`
+          ).join('')}
+        </select>
+      </div>
+      <div class="field">
+        <label>Urgency</label>
+        <select id="m-urgency">
+          ${Object.entries(URGENCY_LABELS).map(([v, l]) =>
+            `<option value="${v}" ${defaultUrgency === v ? 'selected' : ''}>${l}</option>`
+          ).join('')}
+        </select>
+      </div>
     </div>
-    <div class="field">
-      <label>Category</label>
-      <select id="m-category">
-        ${state.categories.map(c =>
-          `<option value="${c}" ${task?.category === c ? 'selected' : ''}>${c}</option>`
-        ).join('')}
-      </select>
+
+    <div class="field-row">
+      <div class="field">
+        <label>Category</label>
+        <select id="m-category">
+          ${state.categories.map(c =>
+            `<option value="${c}" ${defaultCategory === c ? 'selected' : ''}>${c}</option>`
+          ).join('')}
+        </select>
+      </div>
+      <div class="field">
+        <label>Due Date</label>
+        <input id="m-due" type="date" value="${task?.dueDate || ''}" />
+      </div>
     </div>
+
     ${state.projects.length ? `
       <div class="field">
-        <label>Project (optional)</label>
+        <label>Project</label>
         <select id="m-project">
           <option value="">None</option>
           ${projectOptions}
         </select>
       </div>
     ` : ''}
+
+    <div class="field">
+      <label>Description</label>
+      <textarea id="m-desc" rows="3" placeholder="Add details...">${task?.description || ''}</textarea>
+    </div>
+
+    <div class="field">
+      <label>Subtasks</label>
+      <div id="m-subtasks-list"></div>
+      <div class="subtask-add-row">
+        <input id="m-subtask-input" type="text" placeholder="Add a subtask..."
+          onkeydown="if(event.key==='Enter'){event.preventDefault();addEditSubtask()}" />
+        <button class="btn btn-ghost btn-sm" type="button" onclick="addEditSubtask()">Add</button>
+      </div>
+    </div>
+
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
       <button class="btn btn-primary" onclick="saveTask('${id || ''}')">Save</button>
     </div>
   `);
 
-  setTimeout(() => document.getElementById('m-title')?.focus(), 50);
+  setTimeout(() => {
+    document.getElementById('m-title')?.focus();
+    renderSubtaskList();
+  }, 50);
 }
 
 async function saveTask(id) {
@@ -364,14 +515,21 @@ async function saveTask(id) {
   if (!title) return;
   const status = document.getElementById('m-status').value;
   const category = document.getElementById('m-category').value;
+  const urgency = document.getElementById('m-urgency').value;
+  const dueDate = document.getElementById('m-due').value || null;
+  const description = document.getElementById('m-desc').value.trim();
   const projectId = document.getElementById('m-project')?.value || null;
+  const subtasks = [..._subtasks];
 
   if (id) {
     const task = state.tasks.find(t => t.id === id);
-    if (task) Object.assign(task, { title, status, category, projectId: projectId || null });
+    if (task) Object.assign(task, { title, status, category, urgency, dueDate, description, projectId: projectId || null, subtasks });
   } else {
     const projectCtx = activeView === 'project-detail' ? activeProjectId : (projectId || null);
-    state.tasks.push({ id: uuid(), title, status, category, projectId: projectCtx, createdAt: new Date().toISOString() });
+    state.tasks.push({
+      id: uuid(), title, status, category, urgency, dueDate, description,
+      projectId: projectCtx, subtasks, createdAt: new Date().toISOString()
+    });
   }
 
   closeModal();
@@ -393,21 +551,23 @@ function openProjectModal(id) {
       <label>Description</label>
       <textarea id="p-desc" rows="3" placeholder="What's this project about?">${p ? p.description : ''}</textarea>
     </div>
-    <div class="field">
-      <label>Status</label>
-      <select id="p-status">
-        ${Object.entries(STATUS_LABELS).map(([v, l]) =>
-          `<option value="${v}" ${p?.status === v ? 'selected' : ''}>${l}</option>`
-        ).join('')}
-      </select>
-    </div>
-    <div class="field">
-      <label>Category</label>
-      <select id="p-category">
-        ${state.categories.map(c =>
-          `<option value="${c}" ${p?.category === c ? 'selected' : ''}>${c}</option>`
-        ).join('')}
-      </select>
+    <div class="field-row">
+      <div class="field">
+        <label>Status</label>
+        <select id="p-status">
+          ${Object.entries(STATUS_LABELS).map(([v, l]) =>
+            `<option value="${v}" ${p?.status === v ? 'selected' : ''}>${l}</option>`
+          ).join('')}
+        </select>
+      </div>
+      <div class="field">
+        <label>Category</label>
+        <select id="p-category">
+          ${state.categories.map(c =>
+            `<option value="${c}" ${p?.category === c ? 'selected' : ''}>${c}</option>`
+          ).join('')}
+        </select>
+      </div>
     </div>
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
@@ -465,12 +625,10 @@ async function init() {
   await loadData();
   navigate('dashboard');
 
-  // Close modal on overlay click
   document.getElementById('modal-overlay').addEventListener('click', e => {
     if (e.target === e.currentTarget) closeModal();
   });
 
-  // Keyboard shortcut
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape') closeModal();
     if ((e.metaKey || e.ctrlKey) && e.key === 'k') { e.preventDefault(); fabClick(); }
