@@ -43,22 +43,22 @@ function showToast(msg, type = 'info', duration = 3500) {
 // ── PERSISTENCE ───────────────────────────────────────────────────────────────
 async function loadData() {
   try {
-    state = await Gist.load();
+    state = await DriveStorage.load();
     if (!state.categories) state.categories = ['work', 'personal'];
     if (!state.trash) state.trash = [];
   } catch (e) {
     console.error('Load failed', e);
-    showToast('⚠️ Could not load data — check your GitHub token in Settings.', 'error', 6000);
+    showToast('⚠️ Could not load data. Try signing in again from Settings.', 'error', 6000);
   }
 }
 
 async function persist() {
   if (saving) return;
   saving = true;
-  try { await Gist.save(state); }
+  try { await DriveStorage.save(state); }
   catch (e) {
     console.error('Save failed', e);
-    showToast('⚠️ Save failed — check your connection and GitHub token.', 'error', 6000);
+    showToast('⚠️ Save failed — check your connection.', 'error', 6000);
   }
   finally { saving = false; }
 }
@@ -1869,9 +1869,25 @@ function updateHeaderClock() {
 
 // ── INIT ──────────────────────────────────────────────────────────────────────
 async function init() {
-  if (!Gist.isConfigured()) {
+  if (!DriveStorage.isConfigured()) {
     window.location.href = 'setup.html';
     return;
+  }
+
+  if (!DriveStorage.isSignedIn()) {
+    // Try silent sign-in first; show sign-in screen on failure
+    try {
+      await DriveStorage.signIn();
+    } catch (e) {
+      document.body.innerHTML = `
+        <div style="height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#0f0f13;color:#e8e8f0;font-family:Inter,sans-serif;gap:24px;">
+          <div style="font-size:32px;font-weight:700;background:linear-gradient(135deg,#a78bfa,#60a5fa);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">my platform</div>
+          <div style="color:#6b7280;font-size:14px;">Sign in to access your data</div>
+          <button onclick="window.location.reload()" style="padding:14px 32px;border-radius:999px;border:none;background:linear-gradient(135deg,#7c3aed,#3b82f6);color:#fff;font-size:15px;font-weight:600;cursor:pointer;">Sign in with Google</button>
+          <a href="setup.html" style="color:#4b5563;font-size:12px;text-decoration:none;">Settings</a>
+        </div>`;
+      return;
+    }
   }
 
   // Restore persisted UI state

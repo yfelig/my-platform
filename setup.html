@@ -144,24 +144,18 @@
   <div class="card">
     <div class="logo">my platform</div>
     <div class="subtitle">One-time setup · takes 2 minutes</div>
-    <h2>Connect your GitHub</h2>
 
     <div class="error" id="error"></div>
 
-    <label>GitHub Personal Access Token</label>
-    <input type="password" id="token" placeholder="ghp_xxxxxxxxxxxx" />
+    <h2>Sign in with Google</h2>
+    <label>Google OAuth Client ID</label>
+    <input type="text" id="googleClientId" placeholder="123456-abc.apps.googleusercontent.com" />
     <p class="hint">
-      Create one at <a href="https://github.com/settings/tokens/new" target="_blank">github.com/settings/tokens</a> — only needs <strong>gist</strong> scope.
+      Get one free at <a href="https://console.cloud.google.com" target="_blank">console.cloud.google.com</a> —
+      create a project, enable the <strong>Google Drive API</strong>, then create an OAuth 2.0 Web Client ID.
+      Add <code>null</code> (for local file access) or your domain to Authorized JavaScript Origins.
     </p>
-
-    <button class="btn btn-primary" onclick="createNew()">Create new Gist &amp; get started</button>
-
-    <div class="divider">or connect existing</div>
-
-    <label>Gist ID (optional)</label>
-    <input type="text" id="gistId" placeholder="existing gist id" />
-
-    <button class="btn btn-secondary" onclick="connectExisting()">Connect existing Gist</button>
+    <button class="btn btn-primary" id="signin-btn" onclick="doSignIn()">Save &amp; Sign in with Google</button>
 
     <div class="divider">your profile</div>
 
@@ -169,17 +163,6 @@
     <label>Display Name</label>
     <input type="text" id="userName" placeholder="e.g. Alex" />
     <button class="btn btn-secondary" onclick="saveUserName()">Save Name</button>
-
-    <div class="divider">optional integrations</div>
-
-    <h2>Google Calendar</h2>
-    <label>Google OAuth Client ID</label>
-    <input type="text" id="googleClientId" placeholder="123456-abc.apps.googleusercontent.com" />
-    <p class="hint">
-      Get one free at <a href="https://console.cloud.google.com" target="_blank">console.cloud.google.com</a> —
-      create a project, enable Calendar API, then create an OAuth Web client ID.
-    </p>
-    <button class="btn btn-secondary" onclick="saveGoogleClientId()">Save Client ID</button>
 
     <div class="divider">AI assistant</div>
 
@@ -206,16 +189,20 @@
     <button class="btn btn-secondary" onclick="saveBotConfig()">Save AI Config</button>
   </div>
 
-  <script src="gist.js"></script>
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <script src="drive.js"></script>
   <script>
-    // Pre-fill if already configured
-    const cfg = Gist.getConfig();
-    if (cfg.token) document.getElementById('token').value = cfg.token;
-    if (cfg.gistId) document.getElementById('gistId').value = cfg.gistId;
+    // Pre-fill saved values
     const gcid = localStorage.getItem('google_client_id');
     if (gcid) document.getElementById('googleClientId').value = gcid;
     const uname = localStorage.getItem('user_name');
     if (uname) document.getElementById('userName').value = uname;
+
+    function showError(msg) {
+      const el = document.getElementById('error');
+      el.textContent = msg;
+      el.style.display = 'block';
+    }
 
     function saveUserName() {
       const n = document.getElementById('userName').value.trim();
@@ -224,11 +211,21 @@
       alert('Name saved!');
     }
 
-    function saveGoogleClientId() {
+    async function doSignIn() {
       const id = document.getElementById('googleClientId').value.trim();
-      if (id) localStorage.setItem('google_client_id', id);
-      else localStorage.removeItem('google_client_id');
-      alert('Saved! Go back to the dashboard to connect Google Calendar.');
+      if (!id) return showError('Please enter your Google OAuth Client ID.');
+      localStorage.setItem('google_client_id', id);
+      const btn = document.getElementById('signin-btn');
+      btn.textContent = 'Signing in…';
+      btn.disabled = true;
+      try {
+        await DriveStorage.signIn();
+        window.location.href = 'index.html';
+      } catch (e) {
+        btn.textContent = 'Save & Sign in with Google';
+        btn.disabled = false;
+        showError('Sign-in failed: ' + e.message);
+      }
     }
 
     function botProviderChanged() {
@@ -245,11 +242,9 @@
       const apiKey = document.getElementById('botApiKey').value.trim();
       const model = document.getElementById('botModel').value.trim();
       const baseUrl = document.getElementById('botBaseUrl').value.trim();
-
       localStorage.setItem('bot_provider', provider);
       if (apiKey) {
         localStorage.setItem('bot_api_key', apiKey);
-        // Also save as anthropic_api_key for backward compat
         if (provider === 'anthropic') localStorage.setItem('anthropic_api_key', apiKey);
       } else {
         localStorage.removeItem('bot_api_key');
@@ -258,11 +253,10 @@
       else localStorage.removeItem('bot_model');
       if (baseUrl && provider !== 'anthropic') localStorage.setItem('bot_base_url', baseUrl);
       else localStorage.removeItem('bot_base_url');
-
       alert('Saved! The ✦ button in the header opens your AI assistant.');
     }
 
-    // Pre-fill from saved config
+    // Pre-fill bot config
     const savedProvider = localStorage.getItem('bot_provider') || 'anthropic';
     document.getElementById('botProvider').value = savedProvider;
     const savedKey = localStorage.getItem('bot_api_key') || localStorage.getItem('anthropic_api_key') || '';
@@ -272,39 +266,6 @@
     const savedBaseUrl = localStorage.getItem('bot_base_url') || '';
     if (savedBaseUrl) document.getElementById('botBaseUrl').value = savedBaseUrl;
     botProviderChanged();
-
-    function showError(msg) {
-      const el = document.getElementById('error');
-      el.textContent = msg;
-      el.style.display = 'block';
-    }
-
-    async function createNew() {
-      const token = document.getElementById('token').value.trim();
-      if (!token) return showError('Please enter your GitHub token.');
-      try {
-        const gistId = await Gist.createGist(token);
-        localStorage.setItem('gist_token', token);
-        localStorage.setItem('gist_id', gistId);
-        window.location.href = 'index.html';
-      } catch (e) {
-        showError('Could not create Gist. Check your token has "gist" scope.');
-      }
-    }
-
-    async function connectExisting() {
-      const token = document.getElementById('token').value.trim();
-      const gistId = document.getElementById('gistId').value.trim();
-      if (!token || !gistId) return showError('Please enter both token and Gist ID.');
-      localStorage.setItem('gist_token', token);
-      localStorage.setItem('gist_id', gistId);
-      try {
-        await Gist.load();
-        window.location.href = 'index.html';
-      } catch (e) {
-        showError('Could not read Gist. Check your token and Gist ID.');
-      }
-    }
   </script>
 </body>
 </html>
