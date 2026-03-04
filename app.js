@@ -81,7 +81,7 @@ const URGENCY_LABELS = { low: 'Low', medium: 'Medium', high: 'High', critical: '
 // ── PILL HELPERS ──────────────────────────────────────────────────────────────
 function statusPill(s, taskId) {
   const clickable = taskId
-    ? `onclick="cycleStatus(event,'${taskId}')" title="Tap to change status" style="cursor:pointer"`
+    ? `onclick="showStatusPicker(event,'${taskId}')" title="Change status" style="cursor:pointer"`
     : '';
   return `<span class="pill pill-status-${s}" ${clickable}>${STATUS_LABELS[s] || s}</span>`;
 }
@@ -470,7 +470,6 @@ function taskItemHTML(t) {
         ${statusPill(t.status, t.id)}
         ${urgencyBadge(t.urgency)}
         ${catPill(t.category)}
-        <button class="btn btn-ghost btn-sm btn-icon" style="color:#f87171" onclick="deleteTask(event,'${t.id}')">✕</button>
       </div>
     </div>
   `;
@@ -505,12 +504,37 @@ async function toggleDone(e, id) {
   render();
 }
 
-async function cycleStatus(e, id) {
+function showStatusPicker(e, taskId) {
   e.stopPropagation();
-  const task = state.tasks.find(t => t.id === id);
+  document.getElementById('status-picker')?.remove();
+
+  const picker = document.createElement('div');
+  picker.id = 'status-picker';
+  picker.className = 'status-picker';
+  picker.innerHTML = STATUS_CYCLE.map(v => `
+    <div class="status-picker-opt pill pill-status-${v}" onclick="setTaskStatus(event,'${taskId}','${v}')">
+      ${STATUS_LABELS[v]}
+    </div>
+  `).join('');
+  document.body.appendChild(picker);
+
+  // Position below the clicked pill, clamp to viewport
+  const rect = e.currentTarget.getBoundingClientRect();
+  const pickerW = 160;
+  let left = rect.left + window.scrollX;
+  if (left + pickerW > window.innerWidth - 8) left = window.innerWidth - pickerW - 8;
+  picker.style.top = `${rect.bottom + window.scrollY + 6}px`;
+  picker.style.left = `${left}px`;
+
+  setTimeout(() => document.addEventListener('click', () => document.getElementById('status-picker')?.remove(), { once: true }), 0);
+}
+
+async function setTaskStatus(e, taskId, status) {
+  e.stopPropagation();
+  document.getElementById('status-picker')?.remove();
+  const task = state.tasks.find(t => t.id === taskId);
   if (!task) return;
-  const idx = STATUS_CYCLE.indexOf(task.status);
-  task.status = STATUS_CYCLE[(idx + 1) % STATUS_CYCLE.length];
+  task.status = status;
   await persist();
   render();
 }
@@ -519,6 +543,14 @@ async function deleteTask(e, id) {
   e.stopPropagation();
   if (!confirm('Delete this task?')) return;
   state.tasks = state.tasks.filter(t => t.id !== id);
+  await persist();
+  render();
+}
+
+async function deleteTaskFromModal(id) {
+  if (!confirm('Delete this task?')) return;
+  state.tasks = state.tasks.filter(t => t.id !== id);
+  closeModal();
   await persist();
   render();
 }
@@ -650,6 +682,7 @@ function openTaskModal(e, id) {
     </div>
 
     <div class="modal-actions">
+      ${id ? `<button class="btn btn-ghost" style="color:#f87171;margin-right:auto" onclick="deleteTaskFromModal('${id}')">Delete</button>` : ''}
       <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
       <button class="btn btn-primary" onclick="saveTask('${id || ''}')">Save</button>
     </div>
