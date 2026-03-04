@@ -1,5 +1,5 @@
 // ── STATE ────────────────────────────────────────────────────────────────────
-let state = { projects: [], tasks: [], categories: ['work', 'personal'] };
+let state = { projects: [], tasks: [], categories: ['work', 'personal'], trash: [] };
 let filters = { status: 'all', category: 'all' };
 let activeView = 'dashboard';
 let activeProjectId = null;
@@ -45,6 +45,7 @@ async function loadData() {
   try {
     state = await Gist.load();
     if (!state.categories) state.categories = ['work', 'personal'];
+    if (!state.trash) state.trash = [];
   } catch (e) {
     console.error('Load failed', e);
     showToast('⚠️ Could not load data — check your GitHub token in Settings.', 'error', 6000);
@@ -77,6 +78,8 @@ function navigate(view, projectId) {
   const fab = document.getElementById('fab');
   if (fab) fab.style.display = ['tasks', 'projects', 'project-detail'].includes(view) ? 'flex' : 'none';
 
+  if (view === 'log') renderLog();
+
   render();
 }
 
@@ -87,6 +90,7 @@ function render() {
   if (activeView === 'project-detail') renderProjectDetail();
   if (activeView === 'tasks') renderTasks();
   if (activeView === 'pomodoro') renderPomodoro();
+  if (activeView === 'log') renderLog();
 }
 
 // ── LABEL MAPS ────────────────────────────────────────────────────────────────
@@ -533,6 +537,10 @@ function taskItemHTML(t) {
         ${urgencyBadge(t.urgency)}
         ${catPill(t.category)}
       </div>
+      <div class="task-actions">
+        <button class="task-action-btn" onclick="event.stopPropagation();sendToPomodoro('${t.id}')" title="Send to Pomodoro">▶</button>
+        <button class="task-action-btn" onclick="event.stopPropagation();openDecomposeModal('${t.id}')" title="Break into subtasks">🍅</button>
+      </div>
     </div>
   `;
 }
@@ -571,7 +579,9 @@ async function toggleDone(e, id) {
   e.stopPropagation();
   const task = state.tasks.find(t => t.id === id);
   if (!task) return;
-  task.status = task.status === 'done' ? 'not_started' : 'done';
+  const wasDone = task.status === 'done';
+  task.status = wasDone ? 'not_started' : 'done';
+  if (!wasDone) logTaskCompleted(task);
   await persist();
   render();
 }
@@ -617,67 +627,131 @@ async function setTaskStatus(e, taskId, status) {
   render();
 }
 
-let _pendingDelete = null;
-
-function _cancelPendingDelete() {
-  if (_pendingDelete) {
-    clearTimeout(_pendingDelete.timer);
-    _pendingDelete = null;
-  }
-}
-
-function undoDelete() {
-  if (!_pendingDelete) return;
-  clearTimeout(_pendingDelete.timer);
-  // Restore
-  if (_pendingDelete.tasks) state.tasks = _pendingDelete.tasks;
-  if (_pendingDelete.projects) state.projects = _pendingDelete.projects;
-  _pendingDelete = null;
-  render();
-  // Hide toast
-  document.getElementById('toast')?.classList.remove('show');
+// ── TRASH BIN ─────────────────────────────────────────────────────────────────
+function purgeOldTrash() {
+  if (!state.trash) { state.trash = []; return; }
+  const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  state.trash = state.trash.filter(i => new Date(i._deletedAt).getTime() > cutoff);
 }
 
 async function deleteTask(e, id) {
   e.stopPropagation();
-  _cancelPendingDelete();
-  const snapshot = [...state.tasks];
+  const task = state.tasks.find(t => t.id === id);
+  if (!task) return;
   state.tasks = state.tasks.filter(t => t.id !== id);
+  state.trash.push({ _type: 'task', _deletedAt: new Date().toISOString(), ...task });
   render();
-  showToast(`Task deleted. <a onclick="undoDelete()" href="#">Undo</a>`, 'info', 5000);
-  _pendingDelete = {
-    tasks: snapshot,
-    timer: setTimeout(async () => { _pendingDelete = null; await persist(); }, 4500),
-  };
+  await persist();
+  showToast('Task moved to trash', 'info');
 }
 
 async function deleteTaskFromModal(id) {
-  _cancelPendingDelete();
-  const snapshot = [...state.tasks];
+  const task = state.tasks.find(t => t.id === id);
+  if (!task) return;
   state.tasks = state.tasks.filter(t => t.id !== id);
+  state.trash.push({ _type: 'task', _deletedAt: new Date().toISOString(), ...task });
   closeModal();
   render();
-  showToast(`Task deleted. <a onclick="undoDelete()" href="#">Undo</a>`, 'info', 5000);
-  _pendingDelete = {
-    tasks: snapshot,
-    timer: setTimeout(async () => { _pendingDelete = null; await persist(); }, 4500),
-  };
+  await persist();
+  showToast('Task moved to trash', 'info');
 }
 
 async function deleteProject(id) {
   if (!confirm('Delete this project and all its tasks?')) return;
-  _cancelPendingDelete();
-  const snapshotProjects = [...state.projects];
-  const snapshotTasks = [...state.tasks];
+  const proj = state.projects.find(p => p.id === id);
+  const projTasks = state.tasks.filter(t => t.projectId === id);
   state.projects = state.projects.filter(p => p.id !== id);
   state.tasks = state.tasks.filter(t => t.projectId !== id);
+  const now = new Date().toISOString();
+  if (proj) state.trash.push({ _type: 'project', _deletedAt: now, ...proj });
+  projTasks.forEach(t => state.trash.push({ _type: 'task', _deletedAt: now, ...t }));
+  await persist();
   navigate('projects');
-  showToast(`Project deleted. <a onclick="undoDelete()" href="#">Undo</a>`, 'info', 5000);
-  _pendingDelete = {
-    projects: snapshotProjects,
-    tasks: snapshotTasks,
-    timer: setTimeout(async () => { _pendingDelete = null; await persist(); }, 4500),
-  };
+  showToast('Project moved to trash', 'info');
+}
+
+async function restoreFromTrash(itemId) {
+  const idx = state.trash.findIndex(i => i.id === itemId);
+  if (idx === -1) return;
+  const item = { ...state.trash[idx] };
+  state.trash.splice(idx, 1);
+  const type = item._type;
+  delete item._type;
+  delete item._deletedAt;
+  if (type === 'task') state.tasks.push(item);
+  else if (type === 'project') state.projects.push(item);
+  await persist();
+  render();
+  showTrashModal();
+}
+
+function showTrashModal() {
+  purgeOldTrash();
+  const items = state.trash || [];
+  const rows = items.length ? [...items].reverse().map(item => {
+    const agMs = Date.now() - new Date(item._deletedAt).getTime();
+    const ageDays = Math.floor(agMs / (1000 * 60 * 60 * 24));
+    const ageLabel = ageDays === 0 ? 'today' : `${ageDays}d ago`;
+    const icon = item._type === 'project' ? '📁' : '☑';
+    const name = escapeHtml(item.name || item.title || '?');
+    return `
+      <div class="trash-row">
+        <span class="trash-label">${icon} ${name}</span>
+        <span class="trash-age">${ageLabel}</span>
+        <button class="btn btn-ghost btn-sm" onclick="restoreFromTrash('${item.id}')">Restore</button>
+      </div>
+    `;
+  }).join('') : '<div class="trash-empty">Trash is empty</div>';
+
+  showModal(`
+    <div class="modal-title">🗑 Trash Bin</div>
+    <div class="trash-note">Items are automatically deleted after 7 days.</div>
+    <div class="trash-list">${rows}</div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal()">Close</button>
+    </div>
+  `);
+}
+
+// ── SEND TO POMODORO / DECOMPOSE ──────────────────────────────────────────────
+function sendToPomodoro(taskId) {
+  pomo.taskId = taskId;
+  const task = state.tasks.find(t => t.id === taskId);
+  if (task?.projectId) pomo.projectId = task.projectId;
+  pomoSave();
+  navigate('pomodoro');
+}
+
+function openDecomposeModal(taskId) {
+  const task = state.tasks.find(t => t.id === taskId);
+  if (!task) return;
+  showModal(`
+    <div class="modal-title">🍅 Break into Pomodoros</div>
+    <div class="field">
+      <label>Task: <strong>${escapeHtml(task.title)}</strong></label>
+      <label style="margin-top:12px;display:block;color:var(--text-muted);font-size:13px">Enter one subtask per line — each becomes a subtask:</label>
+      <textarea id="decompose-input" rows="7" placeholder="Review notes&#10;Write outline&#10;First draft"></textarea>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveDecompose('${taskId}')">Add Subtasks</button>
+    </div>
+  `);
+  setTimeout(() => document.getElementById('decompose-input')?.focus(), 50);
+}
+
+async function saveDecompose(taskId) {
+  const input = document.getElementById('decompose-input');
+  if (!input) return;
+  const lines = input.value.split('\n').map(l => l.trim()).filter(Boolean);
+  const task = state.tasks.find(t => t.id === taskId);
+  if (!task || !lines.length) { closeModal(); return; }
+  if (!task.subtasks) task.subtasks = [];
+  lines.forEach(title => task.subtasks.push({ id: uuid(), title, done: false }));
+  closeModal();
+  await persist();
+  render();
+  showToast(`Added ${lines.length} subtask${lines.length !== 1 ? 's' : ''}`, 'success');
 }
 
 // ── SUBTASK EDITING ────────────────────────────────────────────────────────────
@@ -709,6 +783,123 @@ function toggleEditSubtask(i) {
 function removeEditSubtask(i) {
   _subtasks.splice(i, 1);
   renderSubtaskList();
+}
+
+// ── DAILY LOG ─────────────────────────────────────────────────────────────────
+function _logTodayKey() {
+  return 'daily_log_' + new Date().toISOString().split('T')[0];
+}
+
+function getDailyLog() {
+  try {
+    const raw = localStorage.getItem(_logTodayKey());
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) { return null; }
+}
+
+function _getOrCreateLog() {
+  return getDailyLog() || {
+    date: new Date().toISOString().split('T')[0],
+    tasksAdded: [],
+    tasksCompleted: [],
+    pomosCompleted: 0,
+    totalFocusMinutes: 0,
+  };
+}
+
+function saveDailyLog(log) {
+  localStorage.setItem(_logTodayKey(), JSON.stringify(log));
+}
+
+function logTaskAdded(task) {
+  const log = _getOrCreateLog();
+  log.tasksAdded.push({
+    id: task.id, title: task.title,
+    time: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+  });
+  saveDailyLog(log);
+}
+
+function logTaskCompleted(task) {
+  const log = _getOrCreateLog();
+  if (!log.tasksCompleted.find(t => t.id === task.id)) {
+    log.tasksCompleted.push({
+      id: task.id, title: task.title,
+      time: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+    });
+    saveDailyLog(log);
+  }
+}
+
+function logPomoCompleted(durationMin) {
+  const log = _getOrCreateLog();
+  log.pomosCompleted = (log.pomosCompleted || 0) + 1;
+  log.totalFocusMinutes = (log.totalFocusMinutes || 0) + durationMin;
+  saveDailyLog(log);
+}
+
+function renderLog() {
+  const el = document.getElementById('view-log');
+  if (!el) return;
+  const log = getDailyLog();
+  const today = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+
+  const statsHtml = log ? `
+    <div class="log-stats">
+      <div class="log-stat-card">
+        <div class="log-stat-val">${log.pomosCompleted || 0}</div>
+        <div class="log-stat-label">Pomodoros</div>
+      </div>
+      <div class="log-stat-card">
+        <div class="log-stat-val">${log.totalFocusMinutes || 0}m</div>
+        <div class="log-stat-label">Focus time</div>
+      </div>
+      <div class="log-stat-card">
+        <div class="log-stat-val">${log.tasksAdded?.length || 0}</div>
+        <div class="log-stat-label">Tasks added</div>
+      </div>
+      <div class="log-stat-card">
+        <div class="log-stat-val">${log.tasksCompleted?.length || 0}</div>
+        <div class="log-stat-label">Tasks done</div>
+      </div>
+    </div>
+  ` : `<div class="log-empty">Nothing logged yet today — get to work!</div>`;
+
+  const addedHtml = log?.tasksAdded?.length ? `
+    <div class="log-section">
+      <div class="log-section-title">Tasks Added</div>
+      ${log.tasksAdded.map(t => `
+        <div class="log-item">
+          <span class="log-item-time">${t.time}</span>
+          <span class="log-item-text">${escapeHtml(t.title)}</span>
+        </div>
+      `).join('')}
+    </div>
+  ` : '';
+
+  const completedHtml = log?.tasksCompleted?.length ? `
+    <div class="log-section">
+      <div class="log-section-title">Tasks Completed</div>
+      ${log.tasksCompleted.map(t => `
+        <div class="log-item done">
+          <span class="log-item-time">${t.time}</span>
+          <span class="log-item-text">${escapeHtml(t.title)}</span>
+        </div>
+      `).join('')}
+    </div>
+  ` : '';
+
+  el.innerHTML = `
+    <div class="log-container">
+      <div class="log-header">
+        <h2 class="log-title">Daily Log</h2>
+        <div class="log-date">${today}</div>
+      </div>
+      ${statsHtml}
+      ${addedHtml}
+      ${completedHtml}
+    </div>
+  `;
 }
 
 // ── TASK MODAL ────────────────────────────────────────────────────────────────
@@ -834,10 +1025,12 @@ async function saveTask(id) {
     if (task) Object.assign(task, { title, status, category, urgency, dueDate, description, projectId: projectId || null, subtasks });
   } else {
     const projectCtx = activeView === 'project-detail' ? activeProjectId : (projectId || null);
-    state.tasks.push({
+    const newTask = {
       id: uuid(), title, status, category, urgency, dueDate, description,
       projectId: projectCtx, subtasks, createdAt: new Date().toISOString(),
-    });
+    };
+    state.tasks.push(newTask);
+    logTaskAdded(newTask);
   }
 
   closeModal();
@@ -1359,10 +1552,13 @@ const pomo = {
   running: false,
   round: 0,        // completed work rounds in current cycle (0–3)
   totalToday: 0,   // total completed work sessions today
+  projectId: null,
   taskId: null,
-  history: [],     // [{taskTitle, completedAt, duration}]
+  sessionPlan: '',
+  history: [],     // [{taskTitle, plan, completedAt, duration}]
   cfg: { work: 25, short: 5, long: 15 },
   _interval: null,
+  _planSaveTimer: null,
 };
 
 function pomoModeDuration(mode) {
@@ -1416,10 +1612,12 @@ function pomoComplete() {
       : null;
     pomo.history.unshift({
       taskTitle,
+      plan: pomo.sessionPlan || '',
       completedAt: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
       duration: pomo.cfg.work,
     });
     if (pomo.history.length > 20) pomo.history.pop();
+    logPomoCompleted(pomo.cfg.work);
     // Advance to break
     pomo.mode = pomo.round === 0 ? 'long' : 'short';
   } else {
@@ -1473,7 +1671,9 @@ function pomoSave() {
     totalToday: pomo.totalToday,
     history: pomo.history,
     cfg: pomo.cfg,
+    projectId: pomo.projectId,
     taskId: pomo.taskId,
+    sessionPlan: pomo.sessionPlan,
     savedDate: todayStr,
   }));
 }
@@ -1491,7 +1691,9 @@ function pomoRestore() {
     pomo.round = sameDay ? (saved.round || 0) : 0;
     pomo.totalToday = sameDay ? (saved.totalToday || 0) : 0;
     pomo.history = sameDay ? (saved.history || []) : [];
+    pomo.projectId = saved.projectId || null;
     pomo.taskId = saved.taskId || null;
+    pomo.sessionPlan = saved.sessionPlan || '';
     // Always reset timer to full duration (don't restore partial timer)
     pomo.secondsLeft = pomoModeDuration(pomo.mode);
     pomo.totalSeconds = pomo.secondsLeft;
@@ -1500,9 +1702,22 @@ function pomoRestore() {
   } catch (e) { /* ignore corrupt state */ }
 }
 
+function pomoSelectProject(id) {
+  pomo.projectId = id || null;
+  pomo.taskId = null; // reset task when project changes
+  pomoSave();
+  renderPomodoro();
+}
+
 function pomoSelectTask(id) {
   pomo.taskId = id || null;
   pomoSave();
+}
+
+function pomoUpdatePlan(val) {
+  pomo.sessionPlan = val;
+  clearTimeout(pomo._planSaveTimer);
+  pomo._planSaveTimer = setTimeout(() => pomoSave(), 600);
 }
 
 function pomoCfgChange(key, val) {
@@ -1540,11 +1755,16 @@ function renderPomodoro() {
     ? `Session ${pomo.round + 1} of 4`
     : (pomo.mode === 'long' ? 'Long break — great work!' : 'Short break');
 
-  // Task selector
-  const activeTasks = state.tasks.filter(t => t.status !== 'done');
+  // Project + task selector
+  const projOptions = state.projects.map(p =>
+    `<option value="${p.id}" ${p.id === pomo.projectId ? 'selected' : ''}>${escapeHtml(p.name)}</option>`
+  ).join('');
+
+  const activeTasks = state.tasks.filter(t => t.status !== 'done' &&
+    (!pomo.projectId || t.projectId === pomo.projectId));
   const taskOptions = activeTasks.map(t => {
-    const proj = t.projectId ? state.projects.find(p => p.id === t.projectId) : null;
-    const label = t.title + (proj ? ` · ${proj.name}` : '');
+    const proj = !pomo.projectId && t.projectId ? state.projects.find(p => p.id === t.projectId) : null;
+    const label = escapeHtml(t.title) + (proj ? ` · ${escapeHtml(proj.name)}` : '');
     return `<option value="${t.id}" ${t.id === pomo.taskId ? 'selected' : ''}>${label}</option>`;
   }).join('');
 
@@ -1603,10 +1823,19 @@ function renderPomodoro() {
 
       <div class="pomo-task-section">
         <label class="pomo-task-label">Working on</label>
+        ${state.projects.length ? `
+        <select class="pomo-task-select" onchange="pomoSelectProject(this.value)" style="margin-bottom:8px">
+          <option value="">— all projects —</option>
+          ${projOptions}
+        </select>` : ''}
         <select class="pomo-task-select" onchange="pomoSelectTask(this.value)">
-          <option value="">— nothing selected —</option>
+          <option value="">— no task selected —</option>
           ${taskOptions}
         </select>
+        <div class="pomo-plan-wrap">
+          <textarea class="pomo-plan-input" placeholder="Session plan — what exactly will you do?" rows="3"
+            oninput="pomoUpdatePlan(this.value)">${escapeHtml(pomo.sessionPlan)}</textarea>
+        </div>
       </div>
 
       <div class="pomo-bottom">
@@ -1628,6 +1857,16 @@ function renderPomodoro() {
   `;
 }
 
+// ── CLOCK ─────────────────────────────────────────────────────────────────────
+function updateHeaderClock() {
+  const el = document.getElementById('header-clock');
+  if (!el) return;
+  const now = new Date();
+  const time = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+  const date = now.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  el.textContent = `${date} · ${time}`;
+}
+
 // ── INIT ──────────────────────────────────────────────────────────────────────
 async function init() {
   if (!Gist.isConfigured()) {
@@ -1643,7 +1882,11 @@ async function init() {
   pomoRestore();
 
   await loadData();
+  purgeOldTrash();
   navigate('dashboard');
+
+  updateHeaderClock();
+  setInterval(updateHeaderClock, 1000);
 
   document.getElementById('modal-overlay').addEventListener('click', e => {
     if (e.target === e.currentTarget) closeModal();

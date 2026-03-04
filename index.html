@@ -17,38 +17,44 @@
       <a data-view="projects" onclick="navigate('projects')">Projects</a>
       <a data-view="tasks" onclick="navigate('tasks')">Tasks</a>
       <a data-view="pomodoro" onclick="navigate('pomodoro')">Pomodoro</a>
+      <a data-view="log" onclick="navigate('log')">Log</a>
     </nav>
     <div class="header-actions">
+      <span class="header-clock" id="header-clock"></span>
+      <button class="btn btn-ghost btn-sm" onclick="showTrashModal()" title="Trash bin">🗑</button>
       <button class="btn btn-ghost btn-sm" id="bot-toggle-btn" onclick="toggleBot()" title="AI Assistant">✦</button>
       <button class="btn btn-ghost btn-sm" onclick="window.location.href='setup.html'" title="Settings">⚙</button>
     </div>
   </header>
 
-  <!-- Bot panel -->
-  <div id="bot-panel" class="bot-panel">
-    <div class="bot-header">
-      <div class="bot-title">✦ AI Assistant</div>
-      <div style="display:flex;align-items:center;gap:4px">
-        <button class="bot-clear-btn" onclick="botClear()" title="Clear conversation">Clear</button>
-        <button class="btn btn-ghost btn-sm" onclick="toggleBot()" style="padding:4px 10px;line-height:1">✕</button>
+  <div id="app-layout">
+    <main>
+      <div id="view-dashboard" class="view"></div>
+      <div id="view-projects" class="view"></div>
+      <div id="view-project-detail" class="view"></div>
+      <div id="view-tasks" class="view"></div>
+      <div id="view-pomodoro" class="view"></div>
+      <div id="view-log" class="view"></div>
+    </main>
+
+    <!-- Bot panel (inside layout so it pushes main) -->
+    <div id="bot-panel" class="bot-panel">
+      <div class="bot-header">
+        <div class="bot-title">✦ AI Assistant</div>
+        <div style="display:flex;align-items:center;gap:4px">
+          <button class="bot-clear-btn" onclick="botClear()" title="Clear conversation">Clear</button>
+          <button class="btn btn-ghost btn-sm" onclick="toggleBot()" style="padding:4px 10px;line-height:1">✕</button>
+        </div>
+      </div>
+      <div class="bot-messages" id="bot-messages"></div>
+      <div class="bot-input-row">
+        <textarea id="bot-input" class="bot-input" placeholder="Tell me what you need…" rows="1"
+          oninput="botInputAutoResize(this)"
+          onkeydown="botInputKeydown(event)"></textarea>
+        <button class="btn btn-primary" id="bot-send-btn" onclick="botSend()" style="padding:8px 14px;flex-shrink:0;font-size:18px;line-height:1">↑</button>
       </div>
     </div>
-    <div class="bot-messages" id="bot-messages"></div>
-    <div class="bot-input-row">
-      <textarea id="bot-input" class="bot-input" placeholder="Tell me what you need…" rows="1"
-        oninput="botInputAutoResize(this)"
-        onkeydown="botInputKeydown(event)"></textarea>
-      <button class="btn btn-primary" id="bot-send-btn" onclick="botSend()" style="padding:8px 14px;flex-shrink:0;font-size:18px;line-height:1">↑</button>
-    </div>
   </div>
-
-  <main>
-    <div id="view-dashboard" class="view"></div>
-    <div id="view-projects" class="view"></div>
-    <div id="view-project-detail" class="view"></div>
-    <div id="view-tasks" class="view"></div>
-    <div id="view-pomodoro" class="view"></div>
-  </main>
 
   <button class="fab" id="fab" onclick="fabClick()" title="Add (⌘K)" style="display:none">+</button>
 
