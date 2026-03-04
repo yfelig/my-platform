@@ -4,7 +4,7 @@ let filters = { status: 'all', category: 'all' };
 let activeView = 'dashboard';
 let activeProjectId = null;
 let saving = false;
-let _subtasks = []; // temp state while editing subtasks in modal
+let _subtasks = [];
 
 // ── UTILS ─────────────────────────────────────────────────────────────────────
 function uuid() {
@@ -76,12 +76,13 @@ const STATUS_LABELS = {
 };
 
 const STATUS_CYCLE = ['not_started', 'in_progress', 'stagnated', 'done', 'other'];
-
 const URGENCY_LABELS = { low: 'Low', medium: 'Medium', high: 'High', critical: 'Critical' };
 
 // ── PILL HELPERS ──────────────────────────────────────────────────────────────
 function statusPill(s, taskId) {
-  const clickable = taskId ? `onclick="cycleStatus(event,'${taskId}')" title="Tap to change status" style="cursor:pointer"` : '';
+  const clickable = taskId
+    ? `onclick="cycleStatus(event,'${taskId}')" title="Tap to change status" style="cursor:pointer"`
+    : '';
   return `<span class="pill pill-status-${s}" ${clickable}>${STATUS_LABELS[s] || s}</span>`;
 }
 
@@ -92,6 +93,148 @@ function catPill(c) {
 function urgencyBadge(u) {
   if (!u || u === 'low') return '';
   return `<span class="urgency-badge urgency-${u}">${URGENCY_LABELS[u]}</span>`;
+}
+
+// ── WEATHER ───────────────────────────────────────────────────────────────────
+const WMO = {
+  0: ['☀️', 'Clear'], 1: ['🌤', 'Mostly clear'], 2: ['⛅', 'Partly cloudy'], 3: ['☁️', 'Overcast'],
+  45: ['🌫', 'Foggy'], 48: ['🌫', 'Icy fog'],
+  51: ['🌦', 'Light drizzle'], 53: ['🌦', 'Drizzle'], 55: ['🌧', 'Heavy drizzle'],
+  61: ['🌧', 'Light rain'], 63: ['🌧', 'Rain'], 65: ['🌧', 'Heavy rain'],
+  71: ['🌨', 'Light snow'], 73: ['❄️', 'Snow'], 75: ['❄️', 'Heavy snow'],
+  80: ['🌦', 'Showers'], 81: ['🌧', 'Rain showers'], 82: ['⛈', 'Heavy showers'],
+  95: ['⛈', 'Thunderstorm'], 96: ['⛈', 'Thunderstorm'], 99: ['⛈', 'Thunderstorm'],
+};
+
+async function loadWeather() {
+  const valEl = document.getElementById('weather-value');
+  const iconEl = document.getElementById('weather-icon');
+  if (!valEl) return;
+
+  // Serve from cache if fresh (30 min)
+  const cached = JSON.parse(localStorage.getItem('wx_cache') || 'null');
+  if (cached && Date.now() - cached.ts < 30 * 60 * 1000) {
+    valEl.textContent = cached.text;
+    valEl.classList.remove('muted');
+    if (iconEl) iconEl.textContent = cached.icon;
+    return;
+  }
+
+  if (!navigator.geolocation) {
+    valEl.textContent = 'Geolocation not supported';
+    return;
+  }
+
+  navigator.geolocation.getCurrentPosition(async pos => {
+    try {
+      const { latitude: lat, longitude: lon } = pos.coords;
+      const res = await fetch(
+        `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weathercode&temperature_unit=fahrenheit`
+      );
+      const data = await res.json();
+      const c = data.current;
+      const [icon, desc] = WMO[c.weathercode] || ['🌡', 'Unknown'];
+      const text = `${Math.round(c.temperature_2m)}°F — ${desc}`;
+      localStorage.setItem('wx_cache', JSON.stringify({ ts: Date.now(), text, icon }));
+      valEl.textContent = text;
+      valEl.classList.remove('muted');
+      if (iconEl) iconEl.textContent = icon;
+    } catch {
+      valEl.textContent = 'Could not load weather';
+    }
+  }, () => {
+    valEl.textContent = 'Allow location for weather';
+  }, { timeout: 8000 });
+}
+
+// ── GOOGLE CALENDAR ───────────────────────────────────────────────────────────
+let _tokenClient = null;
+
+function getValidGoogleToken() {
+  const token = localStorage.getItem('google_access_token');
+  const expiry = parseInt(localStorage.getItem('google_token_expiry') || '0');
+  if (token && Date.now() < expiry - 60000) return token;
+  return null;
+}
+
+async function loadCalendar() {
+  const el = document.getElementById('calendar-widget-body');
+  if (!el) return;
+
+  const clientId = localStorage.getItem('google_client_id') || '';
+  if (!clientId) {
+    el.innerHTML = `<div class="widget-value muted">Add Client ID in <a href="setup.html" style="color:var(--accent1);text-decoration:none">settings</a></div>`;
+    return;
+  }
+
+  const token = getValidGoogleToken();
+  if (!token) {
+    el.innerHTML = `<button class="btn btn-ghost btn-sm" onclick="connectGoogleCalendar()">Connect Google Calendar</button>`;
+    return;
+  }
+
+  await fetchAndDisplayCalendar(token, el);
+}
+
+function connectGoogleCalendar() {
+  const clientId = localStorage.getItem('google_client_id') || '';
+  if (!clientId) { alert('Add your Google Client ID in settings first.'); return; }
+  if (!window.google?.accounts?.oauth2) { alert('Google services not loaded. Check your connection.'); return; }
+
+  _tokenClient = google.accounts.oauth2.initTokenClient({
+    client_id: clientId,
+    scope: 'https://www.googleapis.com/auth/calendar.readonly',
+    callback: async (resp) => {
+      if (resp.error) return;
+      localStorage.setItem('google_access_token', resp.access_token);
+      localStorage.setItem('google_token_expiry', Date.now() + resp.expires_in * 1000);
+      const el = document.getElementById('calendar-widget-body');
+      if (el) await fetchAndDisplayCalendar(resp.access_token, el);
+    },
+  });
+  _tokenClient.requestAccessToken();
+}
+
+async function fetchAndDisplayCalendar(token, el) {
+  try {
+    const now = new Date();
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+    const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).toISOString();
+
+    const res = await fetch(
+      `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${encodeURIComponent(start)}&timeMax=${encodeURIComponent(end)}&orderBy=startTime&singleEvents=true&maxResults=6`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+
+    if (res.status === 401) {
+      localStorage.removeItem('google_access_token');
+      el.innerHTML = `<button class="btn btn-ghost btn-sm" onclick="connectGoogleCalendar()">Reconnect Calendar</button>`;
+      return;
+    }
+
+    const data = await res.json();
+    const events = (data.items || []).filter(ev => ev.status !== 'cancelled');
+
+    if (!events.length) {
+      el.innerHTML = `<div class="widget-value">No events today 🎉</div>`;
+      return;
+    }
+
+    el.innerHTML = events.map(ev => {
+      const startDt = ev.start?.dateTime ? new Date(ev.start.dateTime) : null;
+      const timeStr = startDt
+        ? startDt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+        : 'All day';
+      return `
+        <div class="cal-event">
+          <span class="cal-time">${timeStr}</span>
+          <span class="cal-title">${ev.summary || 'Untitled'}</span>
+        </div>
+      `;
+    }).join('');
+  } catch {
+    el.innerHTML = `<div class="widget-value muted">Could not load events</div>`;
+  }
 }
 
 // ── DASHBOARD ─────────────────────────────────────────────────────────────────
@@ -119,17 +262,17 @@ function renderDashboard() {
 
     <div class="dashboard-widgets">
       <div class="widget">
-        <div class="widget-icon">🌤</div>
+        <div class="widget-icon" id="weather-icon">🌤</div>
         <div class="widget-body">
           <div class="widget-label">Weather</div>
-          <div class="widget-value muted">Connect in settings</div>
+          <div class="widget-value muted" id="weather-value">Loading...</div>
         </div>
       </div>
-      <div class="widget">
+      <div class="widget widget-calendar">
         <div class="widget-icon">📅</div>
         <div class="widget-body">
           <div class="widget-label">Today's Schedule</div>
-          <div class="widget-value muted">Connect Gmail in settings</div>
+          <div id="calendar-widget-body"><div class="widget-value muted">Loading...</div></div>
         </div>
       </div>
     </div>
@@ -165,7 +308,10 @@ function renderDashboard() {
       </div>
     `}
   `;
+
   bindTaskEvents();
+  loadWeather();
+  loadCalendar();
 }
 
 // ── PROJECTS ──────────────────────────────────────────────────────────────────
@@ -297,15 +443,13 @@ function taskItemHTML(t) {
   const subtasks = t.subtasks || [];
   const subtasksDone = subtasks.filter(s => s.done).length;
 
-  const dueMeta = t.dueDate ? `
-    <span class="due-badge ${overdue ? 'overdue' : ''}">
-      📅 ${fmt(t.dueDate)}${overdue ? ' overdue' : ''}
-    </span>
-  ` : '';
+  const dueMeta = t.dueDate
+    ? `<span class="due-badge ${overdue ? 'overdue' : ''}">📅 ${fmt(t.dueDate)}${overdue ? ' · overdue' : ''}</span>`
+    : '';
 
-  const subtaskMeta = subtasks.length ? `
-    <span class="subtask-count">${subtasksDone}/${subtasks.length} subtasks</span>
-  ` : '';
+  const subtaskMeta = subtasks.length
+    ? `<span class="subtask-count">${subtasksDone}/${subtasks.length} subtasks</span>`
+    : '';
 
   return `
     <div class="task-item ${isDone ? 'done' : ''}" onclick="openTaskModal(event,'${t.id}')">
@@ -379,7 +523,7 @@ async function deleteProject(id) {
   navigate('projects');
 }
 
-// ── SUBTASK EDITING (in modal) ─────────────────────────────────────────────────
+// ── SUBTASK EDITING ────────────────────────────────────────────────────────────
 function renderSubtaskList() {
   const el = document.getElementById('m-subtasks-list');
   if (!el) return;
@@ -415,7 +559,6 @@ function openTaskModal(e, id) {
   if (e) e.stopPropagation();
   const task = id ? state.tasks.find(t => t.id === id) : null;
 
-  // Determine context defaults (when adding from inside a project)
   const contextProject = activeView === 'project-detail'
     ? state.projects.find(p => p.id === activeProjectId)
     : null;
@@ -528,7 +671,7 @@ async function saveTask(id) {
     const projectCtx = activeView === 'project-detail' ? activeProjectId : (projectId || null);
     state.tasks.push({
       id: uuid(), title, status, category, urgency, dueDate, description,
-      projectId: projectCtx, subtasks, createdAt: new Date().toISOString()
+      projectId: projectCtx, subtasks, createdAt: new Date().toISOString(),
     });
   }
 
@@ -599,9 +742,8 @@ async function saveProject(id) {
 
 // ── MODAL ENGINE ──────────────────────────────────────────────────────────────
 function showModal(html) {
-  const overlay = document.getElementById('modal-overlay');
   document.getElementById('modal-body').innerHTML = html;
-  overlay.classList.add('open');
+  document.getElementById('modal-overlay').classList.add('open');
 }
 
 function closeModal() {

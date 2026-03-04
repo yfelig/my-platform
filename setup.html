@@ -162,6 +162,17 @@
     <input type="text" id="gistId" placeholder="existing gist id" />
 
     <button class="btn btn-secondary" onclick="connectExisting()">Connect existing Gist</button>
+
+    <div class="divider">optional integrations</div>
+
+    <h2>Google Calendar</h2>
+    <label>Google OAuth Client ID</label>
+    <input type="text" id="googleClientId" placeholder="123456-abc.apps.googleusercontent.com" />
+    <p class="hint">
+      Get one free at <a href="https://console.cloud.google.com" target="_blank">console.cloud.google.com</a> —
+      create a project, enable Calendar API, then create an OAuth Web client ID.
+    </p>
+    <button class="btn btn-secondary" onclick="saveGoogleClientId()">Save Client ID</button>
   </div>
 
   <script src="gist.js"></script>
@@ -170,6 +181,15 @@
     const cfg = Gist.getConfig();
     if (cfg.token) document.getElementById('token').value = cfg.token;
     if (cfg.gistId) document.getElementById('gistId').value = cfg.gistId;
+    const gcid = localStorage.getItem('google_client_id');
+    if (gcid) document.getElementById('googleClientId').value = gcid;
+
+    function saveGoogleClientId() {
+      const id = document.getElementById('googleClientId').value.trim();
+      if (id) localStorage.setItem('google_client_id', id);
+      else localStorage.removeItem('google_client_id');
+      alert('Saved! Go back to the dashboard to connect Google Calendar.');
+    }
 
     function showError(msg) {
       const el = document.getElementById('error');
