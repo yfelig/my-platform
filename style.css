@@ -867,3 +867,291 @@ main { padding: 40px 32px; max-width: 1100px; margin: 0 auto; }
   border-radius: 0 var(--radius) var(--radius) 0;
   padding-left: 15px;
 }
+
+/* ── POMODORO ──────────────────────────────────────────────────────── */
+.pomo-container {
+  max-width: 520px;
+  margin: 0 auto;
+  padding: 0 8px 80px;
+}
+
+.pomo-header {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.pomo-title {
+  font-size: 24px;
+  font-weight: 700;
+  background: linear-gradient(135deg, #a78bfa, #60a5fa);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  margin: 0;
+}
+
+.pomo-stat {
+  font-size: 13px;
+  color: #6b7280;
+}
+
+.pomo-mode-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 32px;
+}
+
+.pomo-mode-tab {
+  flex: 1;
+  padding: 9px 12px;
+  border-radius: 999px;
+  border: 1px solid #2a2a38;
+  background: transparent;
+  color: #6b7280;
+  font-family: 'Inter', sans-serif;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.pomo-mode-tab:hover { border-color: #4a4a5a; color: #e8e8f0; }
+.pomo-mode-tab.active { font-weight: 600; }
+
+.pomo-timer-section {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+  margin-bottom: 28px;
+}
+
+.pomo-timer-wrap {
+  position: relative;
+  width: 200px;
+  height: 200px;
+}
+
+.pomo-ring {
+  width: 200px;
+  height: 200px;
+}
+
+.pomo-ring-bg {
+  fill: none;
+  stroke: #2a2a38;
+  stroke-width: 10;
+}
+
+.pomo-ring-fill {
+  fill: none;
+  stroke-width: 10;
+  stroke-linecap: round;
+  transition: stroke-dashoffset 0.85s linear;
+}
+
+.pomo-time-display {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  align-items: baseline;
+  font-variant-numeric: tabular-nums;
+}
+
+.pomo-mm, .pomo-ss {
+  font-size: 44px;
+  font-weight: 700;
+  color: #e8e8f0;
+  line-height: 1;
+  letter-spacing: -2px;
+}
+
+.pomo-colon {
+  font-size: 38px;
+  font-weight: 700;
+  color: #4b5563;
+  line-height: 1;
+  padding-bottom: 2px;
+}
+
+.pomo-rounds {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.pomo-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1.5px solid #3a3a4a;
+  background: transparent;
+  transition: background 0.3s, border-color 0.3s;
+}
+
+.pomo-controls {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.pomo-reset-btn {
+  font-size: 22px;
+  padding: 8px 14px;
+  line-height: 1;
+  color: #6b7280;
+  transition: color 0.2s;
+}
+
+.pomo-reset-btn:hover { color: #e8e8f0; }
+
+.pomo-start-btn {
+  padding: 13px 44px;
+  border-radius: 999px;
+  font-size: 16px;
+  font-weight: 600;
+  border: none;
+  color: white;
+  cursor: pointer;
+  transition: opacity 0.2s, transform 0.1s;
+  font-family: 'Inter', sans-serif;
+}
+
+.pomo-start-btn:hover { opacity: 0.88; }
+.pomo-start-btn:active { transform: scale(0.97); }
+
+.pomo-task-section {
+  background: #1a1a24;
+  border: 1px solid #2a2a38;
+  border-radius: 16px;
+  padding: 16px 20px;
+  margin-bottom: 20px;
+}
+
+.pomo-task-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #6b7280;
+  margin-bottom: 8px;
+}
+
+.pomo-task-select {
+  width: 100%;
+  background: #0f0f13;
+  border: 1px solid #2a2a38;
+  border-radius: 10px;
+  padding: 10px 12px;
+  color: #e8e8f0;
+  font-family: 'Inter', sans-serif;
+  font-size: 14px;
+  outline: none;
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+
+.pomo-task-select:focus { border-color: #7c3aed; }
+
+.pomo-bottom {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+@media (max-width: 500px) {
+  .pomo-bottom { grid-template-columns: 1fr; }
+}
+
+.pomo-config, .pomo-history {
+  background: #1a1a24;
+  border: 1px solid #2a2a38;
+  border-radius: 16px;
+  padding: 16px 20px;
+}
+
+.pomo-section-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #6b7280;
+  margin-bottom: 12px;
+}
+
+.pomo-cfg-row {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.pomo-cfg-row label {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 13px;
+  color: #9ca3af;
+}
+
+.pomo-cfg-input {
+  width: 58px;
+  background: #0f0f13;
+  border: 1px solid #2a2a38;
+  border-radius: 8px;
+  padding: 5px 8px;
+  color: #e8e8f0;
+  font-family: 'Inter', sans-serif;
+  font-size: 13px;
+  text-align: center;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.pomo-cfg-input:focus { border-color: #7c3aed; }
+
+.pomo-hist-list {
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.pomo-hist-row {
+  display: grid;
+  grid-template-columns: 52px 1fr 30px;
+  gap: 8px;
+  align-items: center;
+  padding: 7px 0;
+  border-bottom: 1px solid #1e1e2a;
+  font-size: 13px;
+}
+
+.pomo-hist-row:last-child { border-bottom: none; }
+
+.pomo-hist-time {
+  color: #6b7280;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.pomo-hist-task {
+  color: #e8e8f0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pomo-hist-dur {
+  color: #6b7280;
+  font-size: 11px;
+  text-align: right;
+}
+
+.pomo-hist-empty {
+  color: #4b5563;
+  font-size: 13px;
+  text-align: center;
+  padding: 20px 0;
+}

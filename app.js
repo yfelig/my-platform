@@ -64,6 +64,7 @@ function render() {
   if (activeView === 'projects') renderProjects();
   if (activeView === 'project-detail') renderProjectDetail();
   if (activeView === 'tasks') renderTasks();
+  if (activeView === 'pomodoro') renderPomodoro();
 }
 
 // ── LABEL MAPS ────────────────────────────────────────────────────────────────
@@ -982,30 +983,81 @@ const BOT_TOOLS = [
       required: ['name'],
     },
   },
+  {
+    name: 'update_task',
+    description: 'Update fields of an existing task. Use this when the user wants to change status, urgency, due date, title, description, or project assignment of a task that already exists.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        taskId: { type: 'string', description: 'The ID of the task to update (from the task list in the system prompt)' },
+        title: { type: 'string', description: 'New title' },
+        description: { type: 'string', description: 'New description' },
+        status: { type: 'string', enum: ['not_started', 'in_progress', 'stagnated', 'done', 'other'] },
+        urgency: { type: 'string', enum: ['low', 'medium', 'high', 'critical'] },
+        dueDate: { type: 'string', description: 'New due date YYYY-MM-DD, or empty string to clear' },
+        projectId: { type: 'string', description: 'Project ID to assign, or empty string to unassign' },
+      },
+      required: ['taskId'],
+    },
+  },
 ];
 
 function botSystemPrompt() {
   const today = new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
-  const projectList = state.projects.length
-    ? state.projects.map(p => `- ${p.name} (id: ${p.id}, status: ${p.status}, category: ${p.category})`).join('\n')
-    : 'No projects yet.';
-  const categoryList = state.categories.join(', ');
+  const todayStr = new Date().toISOString().split('T')[0];
 
-  return `You are a personal productivity assistant. Today is ${today}.
+  const activeTasks = state.tasks.filter(t => t.status !== 'done');
+  const doneTasks = state.tasks.filter(t => t.status === 'done');
+  const overdueTasks = activeTasks.filter(t => t.dueDate && t.dueDate < todayStr);
+  const stagnatedTasks = activeTasks.filter(t => t.status === 'stagnated');
 
-When the user tells you things they need to do, immediately call create_task or create_project — don't ask for confirmation. Create multiple tasks in one response if needed.
+  const taskLines = state.tasks.length
+    ? state.tasks.map(t => {
+        const proj = t.projectId ? state.projects.find(p => p.id === t.projectId) : null;
+        const parts = [
+          `[id:${t.id}]`,
+          `"${t.title}"`,
+          `status:${t.status}`,
+          `urgency:${t.urgency || 'low'}`,
+          proj ? `project:"${proj.name}"` : 'no-project',
+          t.dueDate ? `due:${t.dueDate}` : 'no-due',
+          t.description ? `desc:"${t.description.slice(0, 80).replace(/"/g, "'")}"` : '',
+        ].filter(Boolean);
+        return '  ' + parts.join(' | ');
+      }).join('\n')
+    : '  (no tasks yet)';
 
-Existing projects:\n${projectList}
+  const projectLines = state.projects.length
+    ? state.projects.map(p => `  [id:${p.id}] "${p.name}" | status:${p.status} | category:${p.category}${p.description ? ` | desc:"${p.description.slice(0,60).replace(/"/g,"'")}"` : ''}`).join('\n')
+    : '  (no projects yet)';
 
-Available categories: ${categoryList}
+  return `You are a personal productivity assistant embedded in a task management platform. Today is ${today}.
 
-Guidelines:
-- If a project is mentioned by name and it already exists, use its ID for the task's projectId
-- Infer urgency from language: "urgent"/"ASAP" → high or critical; "can wait"/"eventually" → low
-- Infer due dates from relative expressions ("tomorrow", "next Friday", "next week")
-- Keep task titles short and actionable (verb + object)
-- After creating items, respond with a short confirmation — don't repeat the full list
-- If the user asks a question unrelated to creating tasks, just answer it helpfully`;
+=== PLATFORM STATE ===
+Tasks: ${state.tasks.length} total | ${activeTasks.length} active | ${doneTasks.length} done | ${overdueTasks.length} overdue | ${stagnatedTasks.length} stagnated
+
+ALL TASKS:
+${taskLines}
+
+PROJECTS:
+${projectLines}
+
+Categories available: ${state.categories.join(', ')}
+
+=== YOUR TOOLS ===
+- create_task: add a new task
+- create_project: add a new project
+- update_task: change fields of an existing task (status, urgency, due date, title, description, project)
+
+=== GUIDELINES ===
+When the user says something they need to do → immediately call create_task, no confirmation.
+When asked to update a task (mark done, change urgency, etc.) → call update_task with the task's ID from the list above.
+When asked questions like "what should I work on?" → analyze urgency, due dates, overdue items, and stagnated items. Give a specific, useful answer.
+When asked to identify unclear tasks → look for vague titles, items with no description and no due date.
+When asked for a daily schedule → group by urgency and suggest an order. Be concrete.
+Keep tool call confirmations brief. Use the task IDs from the list above for update_task.
+Infer urgency: "urgent"/"ASAP" → high/critical; "can wait"/"eventually" → low.
+Infer due dates from relative expressions like "tomorrow", "next Friday", "end of week".`;
 }
 
 async function botCallAnthropic({ apiKey, model }) {
@@ -1162,10 +1214,272 @@ function botExecuteTool(name, input) {
       return `Created project "${project.name}" (id: ${project.id})`;
     }
 
+    if (name === 'update_task') {
+      const task = state.tasks.find(t => t.id === input.taskId);
+      if (!task) return `Task not found: ${input.taskId}`;
+      if (input.title !== undefined) task.title = input.title;
+      if (input.description !== undefined) task.description = input.description;
+      if (input.status !== undefined) task.status = input.status;
+      if (input.urgency !== undefined) task.urgency = input.urgency;
+      if (input.dueDate !== undefined) task.dueDate = input.dueDate || null;
+      if (input.projectId !== undefined) {
+        task.projectId = input.projectId && state.projects.find(p => p.id === input.projectId) ? input.projectId : null;
+      }
+      return `Updated task "${task.title}" (id: ${task.id})`;
+    }
+
     return `Unknown tool: ${name}`;
   } catch (e) {
     return `Error: ${e.message}`;
   }
+}
+
+// ── POMODORO ──────────────────────────────────────────────────────────────────
+const POMO_CIRC = 552.9; // 2π × r=88
+
+const pomo = {
+  mode: 'work',
+  secondsLeft: 25 * 60,
+  totalSeconds: 25 * 60,
+  running: false,
+  round: 0,        // completed work rounds in current cycle (0–3)
+  totalToday: 0,   // total completed work sessions today
+  taskId: null,
+  history: [],     // [{taskTitle, completedAt, duration}]
+  cfg: { work: 25, short: 5, long: 15 },
+  _interval: null,
+};
+
+function pomoModeDuration(mode) {
+  return pomo.cfg[mode] * 60;
+}
+
+function pomoSetMode(mode) {
+  if (pomo.running) {
+    clearInterval(pomo._interval);
+    pomo._interval = null;
+    pomo.running = false;
+  }
+  pomo.mode = mode;
+  pomo.secondsLeft = pomoModeDuration(mode);
+  pomo.totalSeconds = pomo.secondsLeft;
+  renderPomodoro();
+}
+
+function pomoToggle() {
+  if (pomo.running) {
+    clearInterval(pomo._interval);
+    pomo._interval = null;
+    pomo.running = false;
+  } else {
+    pomo.running = true;
+    pomo._interval = setInterval(pomoTick, 1000);
+  }
+  updatePomoDisplay();
+}
+
+function pomoReset() {
+  if (pomo.running) {
+    clearInterval(pomo._interval);
+    pomo._interval = null;
+    pomo.running = false;
+  }
+  pomo.secondsLeft = pomoModeDuration(pomo.mode);
+  pomo.totalSeconds = pomo.secondsLeft;
+  updatePomoDisplay();
+}
+
+function pomoTick() {
+  if (pomo.secondsLeft <= 0) {
+    pomoComplete();
+    return;
+  }
+  pomo.secondsLeft--;
+  updatePomoDisplay();
+}
+
+function pomoComplete() {
+  clearInterval(pomo._interval);
+  pomo._interval = null;
+  pomo.running = false;
+  pomoBeep();
+
+  if (pomo.mode === 'work') {
+    pomo.totalToday++;
+    pomo.round = (pomo.round + 1) % 4;
+    const taskTitle = pomo.taskId
+      ? (state.tasks.find(t => t.id === pomo.taskId)?.title || null)
+      : null;
+    pomo.history.unshift({
+      taskTitle,
+      completedAt: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+      duration: pomo.cfg.work,
+    });
+    if (pomo.history.length > 20) pomo.history.pop();
+    // Advance to break
+    pomo.mode = pomo.round === 0 ? 'long' : 'short';
+  } else {
+    pomo.mode = 'work';
+  }
+  pomo.secondsLeft = pomoModeDuration(pomo.mode);
+  pomo.totalSeconds = pomo.secondsLeft;
+  renderPomodoro();
+}
+
+function pomoBeep() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    [0, 0.3, 0.6].forEach(delay => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.frequency.value = 880;
+      osc.type = 'sine';
+      gain.gain.setValueAtTime(0.5, ctx.currentTime + delay);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + delay + 0.25);
+      osc.start(ctx.currentTime + delay);
+      osc.stop(ctx.currentTime + delay + 0.25);
+    });
+  } catch (e) { /* AudioContext not available */ }
+}
+
+function updatePomoDisplay() {
+  const ring = document.querySelector('.pomo-ring-fill');
+  const timeEl = document.querySelector('.pomo-time-display');
+  const btn = document.getElementById('pomo-btn');
+  if (!ring || !timeEl) return;
+
+  const progress = pomo.totalSeconds > 0 ? pomo.secondsLeft / pomo.totalSeconds : 1;
+  ring.setAttribute('stroke-dashoffset', (POMO_CIRC * (1 - progress)).toFixed(2));
+
+  const m = String(Math.floor(pomo.secondsLeft / 60)).padStart(2, '0');
+  const s = String(pomo.secondsLeft % 60).padStart(2, '0');
+  timeEl.innerHTML = `<span class="pomo-mm">${m}</span><span class="pomo-colon">:</span><span class="pomo-ss">${s}</span>`;
+
+  if (btn) btn.textContent = pomo.running ? 'Pause' : (pomo.secondsLeft < pomo.totalSeconds ? 'Resume' : 'Start');
+}
+
+function pomoSelectTask(id) {
+  pomo.taskId = id || null;
+}
+
+function pomoCfgChange(key, val) {
+  const n = parseInt(val, 10);
+  if (!isNaN(n) && n > 0) {
+    pomo.cfg[key] = n;
+    if (pomo.mode === key && !pomo.running) {
+      pomo.secondsLeft = n * 60;
+      pomo.totalSeconds = pomo.secondsLeft;
+      updatePomoDisplay();
+    }
+  }
+}
+
+function renderPomodoro() {
+  const el = document.getElementById('view-pomodoro');
+  if (!el) return;
+
+  const modeColors = { work: '#7c3aed', short: '#10b981', long: '#3b82f6' };
+  const modeLabels = { work: 'Focus', short: 'Short Break', long: 'Long Break' };
+  const color = modeColors[pomo.mode];
+
+  const progress = pomo.totalSeconds > 0 ? pomo.secondsLeft / pomo.totalSeconds : 1;
+  const offset = (POMO_CIRC * (1 - progress)).toFixed(2);
+  const m = String(Math.floor(pomo.secondsLeft / 60)).padStart(2, '0');
+  const s = String(pomo.secondsLeft % 60).padStart(2, '0');
+  const btnLabel = pomo.running ? 'Pause' : (pomo.secondsLeft < pomo.totalSeconds ? 'Resume' : 'Start');
+
+  // Round dots
+  const dots = Array.from({ length: 4 }, (_, i) =>
+    `<div class="pomo-dot ${i < pomo.round ? 'filled' : ''}" style="${i < pomo.round ? `background:${color};border-color:${color};` : ''}"></div>`
+  ).join('');
+
+  // Task selector
+  const activeTasks = state.tasks.filter(t => t.status !== 'done');
+  const taskOptions = activeTasks.map(t => {
+    const proj = t.projectId ? state.projects.find(p => p.id === t.projectId) : null;
+    const label = t.title + (proj ? ` · ${proj.name}` : '');
+    return `<option value="${t.id}" ${t.id === pomo.taskId ? 'selected' : ''}>${label}</option>`;
+  }).join('');
+
+  // History rows
+  const historyRows = pomo.history.length
+    ? pomo.history.map(h =>
+        `<div class="pomo-hist-row">
+          <span class="pomo-hist-time">${h.completedAt}</span>
+          <span class="pomo-hist-task">${h.taskTitle || '—'}</span>
+          <span class="pomo-hist-dur">${h.duration}m</span>
+        </div>`
+      ).join('')
+    : `<div class="pomo-hist-empty">No sessions yet today</div>`;
+
+  el.innerHTML = `
+    <div class="pomo-container">
+      <div class="pomo-header">
+        <h2 class="pomo-title">Pomodoro</h2>
+        <div class="pomo-stat">${pomo.totalToday > 0 ? `${pomo.totalToday} session${pomo.totalToday !== 1 ? 's' : ''} today` : 'Ready to focus'}</div>
+      </div>
+
+      <div class="pomo-mode-tabs">
+        ${['work', 'short', 'long'].map(mode =>
+          `<button class="pomo-mode-tab ${pomo.mode === mode ? 'active' : ''}"
+            onclick="pomoSetMode('${mode}')"
+            style="${pomo.mode === mode ? `background:${modeColors[mode]}22;color:${modeColors[mode]};border-color:${modeColors[mode]}66;` : ''}"
+          >${modeLabels[mode]}</button>`
+        ).join('')}
+      </div>
+
+      <div class="pomo-timer-section">
+        <div class="pomo-timer-wrap">
+          <svg class="pomo-ring" viewBox="0 0 200 200">
+            <circle class="pomo-ring-bg" cx="100" cy="100" r="88"/>
+            <circle class="pomo-ring-fill" cx="100" cy="100" r="88"
+              stroke="${color}"
+              stroke-dasharray="${POMO_CIRC}"
+              stroke-dashoffset="${offset}"
+              transform="rotate(-90 100 100)"/>
+          </svg>
+          <div class="pomo-time-display">
+            <span class="pomo-mm">${m}</span><span class="pomo-colon">:</span><span class="pomo-ss">${s}</span>
+          </div>
+        </div>
+
+        <div class="pomo-rounds">${dots}</div>
+
+        <div class="pomo-controls">
+          <button class="btn btn-ghost pomo-reset-btn" onclick="pomoReset()" title="Reset">↺</button>
+          <button class="btn pomo-start-btn" id="pomo-btn" onclick="pomoToggle()"
+            style="background:${color};"
+          >${btnLabel}</button>
+        </div>
+      </div>
+
+      <div class="pomo-task-section">
+        <label class="pomo-task-label">Working on</label>
+        <select class="pomo-task-select" onchange="pomoSelectTask(this.value)">
+          <option value="">— nothing selected —</option>
+          ${taskOptions}
+        </select>
+      </div>
+
+      <div class="pomo-bottom">
+        <div class="pomo-config">
+          <div class="pomo-section-title">Timer settings (min)</div>
+          <div class="pomo-cfg-row">
+            <label>Focus <input type="number" min="1" max="90" value="${pomo.cfg.work}" oninput="pomoCfgChange('work',this.value)" class="pomo-cfg-input"/></label>
+            <label>Short break <input type="number" min="1" max="30" value="${pomo.cfg.short}" oninput="pomoCfgChange('short',this.value)" class="pomo-cfg-input"/></label>
+            <label>Long break <input type="number" min="1" max="60" value="${pomo.cfg.long}" oninput="pomoCfgChange('long',this.value)" class="pomo-cfg-input"/></label>
+          </div>
+        </div>
+
+        <div class="pomo-history">
+          <div class="pomo-section-title">Session history</div>
+          <div class="pomo-hist-list">${historyRows}</div>
+        </div>
+      </div>
+    </div>
+  `;
 }
 
 // ── INIT ──────────────────────────────────────────────────────────────────────
