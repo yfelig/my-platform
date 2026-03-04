@@ -106,6 +106,23 @@ const WMO = {
   95: ['⛈', 'Thunderstorm'], 96: ['⛈', 'Thunderstorm'], 99: ['⛈', 'Thunderstorm'],
 };
 
+async function getCoords() {
+  // Try browser geolocation first (more accurate, 5s timeout)
+  if (navigator.geolocation) {
+    try {
+      const pos = await new Promise((resolve, reject) =>
+        navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 5000, maximumAge: 600000 })
+      );
+      return { lat: pos.coords.latitude, lon: pos.coords.longitude };
+    } catch {}
+  }
+  // Fall back to IP geolocation (no permission needed)
+  const res = await fetch('https://ipapi.co/json/');
+  const data = await res.json();
+  if (!data.latitude) throw new Error('IP geolocation failed');
+  return { lat: data.latitude, lon: data.longitude };
+}
+
 async function loadWeather() {
   const valEl = document.getElementById('weather-value');
   const iconEl = document.getElementById('weather-icon');
@@ -120,31 +137,22 @@ async function loadWeather() {
     return;
   }
 
-  if (!navigator.geolocation) {
-    valEl.textContent = 'Geolocation not supported';
-    return;
+  try {
+    const { lat, lon } = await getCoords();
+    const res = await fetch(
+      `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weathercode&temperature_unit=fahrenheit`
+    );
+    const data = await res.json();
+    const c = data.current;
+    const [icon, desc] = WMO[c.weathercode] || ['🌡', 'Unknown'];
+    const text = `${Math.round(c.temperature_2m)}°F — ${desc}`;
+    localStorage.setItem('wx_cache', JSON.stringify({ ts: Date.now(), text, icon }));
+    valEl.textContent = text;
+    valEl.classList.remove('muted');
+    if (iconEl) iconEl.textContent = icon;
+  } catch {
+    valEl.textContent = 'Could not load weather';
   }
-
-  navigator.geolocation.getCurrentPosition(async pos => {
-    try {
-      const { latitude: lat, longitude: lon } = pos.coords;
-      const res = await fetch(
-        `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weathercode&temperature_unit=fahrenheit`
-      );
-      const data = await res.json();
-      const c = data.current;
-      const [icon, desc] = WMO[c.weathercode] || ['🌡', 'Unknown'];
-      const text = `${Math.round(c.temperature_2m)}°F — ${desc}`;
-      localStorage.setItem('wx_cache', JSON.stringify({ ts: Date.now(), text, icon }));
-      valEl.textContent = text;
-      valEl.classList.remove('muted');
-      if (iconEl) iconEl.textContent = icon;
-    } catch {
-      valEl.textContent = 'Could not load weather';
-    }
-  }, () => {
-    valEl.textContent = 'Allow location for weather';
-  }, { timeout: 8000 });
 }
 
 // ── GOOGLE CALENDAR ───────────────────────────────────────────────────────────
