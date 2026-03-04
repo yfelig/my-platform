@@ -557,10 +557,81 @@ function setFilter(key, val) {
 function setQuickDate(daysFromNow) {
   const input = document.getElementById('m-due');
   if (!input) return;
-  if (daysFromNow < 0) { input.value = ''; return; }
-  const d = new Date();
-  d.setDate(d.getDate() + daysFromNow);
-  input.value = d.toISOString().split('T')[0];
+  if (daysFromNow < 0) { input.value = ''; }
+  else {
+    const d = new Date();
+    d.setDate(d.getDate() + daysFromNow);
+    input.value = d.toISOString().split('T')[0];
+  }
+  _updateDueBtn();
+}
+
+let _calYear, _calMonth;
+
+function toggleCalendar() {
+  const pop = document.getElementById('cal-popup');
+  if (!pop) return;
+  if (pop.style.display !== 'none') { pop.style.display = 'none'; return; }
+  const val = document.getElementById('m-due').value;
+  const ref = val ? new Date(val + 'T00:00:00') : new Date();
+  _calYear = ref.getFullYear();
+  _calMonth = ref.getMonth();
+  _renderCalendar();
+  pop.style.display = 'block';
+}
+
+function _renderCalendar() {
+  const pop = document.getElementById('cal-popup');
+  if (!pop) return;
+  const todayStr = new Date().toISOString().split('T')[0];
+  const selVal = document.getElementById('m-due').value;
+  const firstDay = new Date(_calYear, _calMonth, 1).getDay();
+  const daysInMonth = new Date(_calYear, _calMonth + 1, 0).getDate();
+  const monthName = new Date(_calYear, _calMonth).toLocaleString('default', { month: 'long', year: 'numeric' });
+
+  let cells = '';
+  for (let i = 0; i < firstDay; i++) cells += '<div></div>';
+  for (let d = 1; d <= daysInMonth; d++) {
+    const iso = `${_calYear}-${String(_calMonth + 1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    const isToday = iso === todayStr;
+    const isSel = iso === selVal;
+    cells += `<div class="cal-day ${isToday ? 'cal-today' : ''} ${isSel ? 'cal-selected' : ''}"
+      onclick="pickCalDay('${iso}')">${d}</div>`;
+  }
+
+  pop.innerHTML = `
+    <div class="cal-header">
+      <button type="button" onclick="calNav(-1)">‹</button>
+      <span>${monthName}</span>
+      <button type="button" onclick="calNav(1)">›</button>
+    </div>
+    <div class="cal-weekdays">Su Mo Tu We Th Fr Sa</div>
+    <div class="cal-grid">${cells}</div>
+    <div class="cal-quick">
+      <button type="button" onclick="setQuickDate(0);toggleCalendar()">Today</button>
+      <button type="button" onclick="setQuickDate(1);toggleCalendar()">Tomorrow</button>
+      <button type="button" onclick="setQuickDate(7);toggleCalendar()">+1 wk</button>
+      <button type="button" onclick="setQuickDate(-1);toggleCalendar()">Clear</button>
+    </div>`;
+}
+
+function calNav(dir) {
+  _calMonth += dir;
+  if (_calMonth > 11) { _calMonth = 0; _calYear++; }
+  if (_calMonth < 0) { _calMonth = 11; _calYear--; }
+  _renderCalendar();
+}
+
+function pickCalDay(iso) {
+  document.getElementById('m-due').value = iso;
+  _updateDueBtn();
+  document.getElementById('cal-popup').style.display = 'none';
+}
+
+function _updateDueBtn() {
+  const val = document.getElementById('m-due').value;
+  const btn = document.getElementById('due-picker-btn');
+  if (btn) btn.textContent = val ? `📅 ${fmt(val)}` : 'Pick a date';
 }
 
 async function addCategory() {
@@ -961,13 +1032,11 @@ function openTaskModal(e, id) {
       </div>
       <div class="field">
         <label>Due Date</label>
-        <input id="m-due" type="date" value="${task?.dueDate || ''}" />
-        <div class="quick-dates">
-          <button type="button" class="quick-date-btn" onclick="setQuickDate(0)">Today</button>
-          <button type="button" class="quick-date-btn" onclick="setQuickDate(1)">Tomorrow</button>
-          <button type="button" class="quick-date-btn" onclick="setQuickDate(7)">+1 week</button>
-          <button type="button" class="quick-date-btn" onclick="setQuickDate(-1)">Clear</button>
-        </div>
+        <input id="m-due" type="hidden" value="${task?.dueDate || ''}" />
+        <button type="button" class="due-picker-btn" id="due-picker-btn" onclick="toggleCalendar()">
+          ${task?.dueDate ? `📅 ${fmt(task.dueDate)}` : 'Pick a date'}
+        </button>
+        <div class="cal-popup" id="cal-popup" style="display:none"></div>
       </div>
     </div>
 
@@ -1618,6 +1687,11 @@ function pomoComplete() {
     });
     if (pomo.history.length > 20) pomo.history.pop();
     logPomoCompleted(pomo.cfg.work);
+    // Log the task as worked on in daily log
+    if (pomo.taskId) {
+      const t = state.tasks.find(t => t.id === pomo.taskId);
+      if (t) logTaskCompleted(t);
+    }
     // Advance to break
     pomo.mode = pomo.round === 0 ? 'long' : 'short';
   } else {
@@ -1632,17 +1706,21 @@ function pomoComplete() {
 function pomoBeep() {
   try {
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    [0, 0.3, 0.6].forEach(delay => {
+    // Three rising tones — pleasant chime
+    const notes = [523, 659, 784]; // C5, E5, G5
+    notes.forEach((freq, i) => {
+      const delay = i * 0.35;
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
       osc.connect(gain);
       gain.connect(ctx.destination);
-      osc.frequency.value = 880;
+      osc.frequency.value = freq;
       osc.type = 'sine';
-      gain.gain.setValueAtTime(0.5, ctx.currentTime + delay);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + delay + 0.25);
+      gain.gain.setValueAtTime(0, ctx.currentTime + delay);
+      gain.gain.linearRampToValueAtTime(0.4, ctx.currentTime + delay + 0.05);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + delay + 0.8);
       osc.start(ctx.currentTime + delay);
-      osc.stop(ctx.currentTime + delay + 0.25);
+      osc.stop(ctx.currentTime + delay + 0.9);
     });
   } catch (e) { /* AudioContext not available */ }
 }
@@ -1821,20 +1899,20 @@ function renderPomodoro() {
         </div>
       </div>
 
-      <div class="pomo-task-section">
-        <label class="pomo-task-label">Working on</label>
+      <div class="pomo-task-section ${pomo.running ? 'pomo-locked' : ''}">
+        <label class="pomo-task-label">Working on${pomo.running ? ' <span class="pomo-lock-badge">🔒 locked</span>' : ''}</label>
         ${state.projects.length ? `
-        <select class="pomo-task-select" onchange="pomoSelectProject(this.value)" style="margin-bottom:8px">
+        <select class="pomo-task-select" onchange="pomoSelectProject(this.value)" style="margin-bottom:8px" ${pomo.running ? 'disabled' : ''}>
           <option value="">— all projects —</option>
           ${projOptions}
         </select>` : ''}
-        <select class="pomo-task-select" onchange="pomoSelectTask(this.value)">
+        <select class="pomo-task-select" onchange="pomoSelectTask(this.value)" ${pomo.running ? 'disabled' : ''}>
           <option value="">— no task selected —</option>
           ${taskOptions}
         </select>
         <div class="pomo-plan-wrap">
           <textarea class="pomo-plan-input" placeholder="Session plan — what exactly will you do?" rows="3"
-            oninput="pomoUpdatePlan(this.value)">${escapeHtml(pomo.sessionPlan)}</textarea>
+            oninput="pomoUpdatePlan(this.value)" ${pomo.running ? 'readonly' : ''}>${escapeHtml(pomo.sessionPlan)}</textarea>
         </div>
       </div>
 
